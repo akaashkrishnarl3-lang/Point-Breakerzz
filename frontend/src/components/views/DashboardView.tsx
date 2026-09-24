@@ -30,6 +30,7 @@ interface DashboardViewProps {
   onNavigate: (view: NavView) => void;
   onSelectMeeting: (meetingId: string) => void;
   onInspectItem: (item: ActionItem | UnresolvedIssue) => void;
+  onLoadDemo?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -39,7 +40,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   unresolved,
   onNavigate,
   onSelectMeeting,
-  onInspectItem
+  onInspectItem,
+  onLoadDemo
 }) => {
   const [statusFilter, setStatusFilter] = useState<ActionItemStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,6 +61,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
+      {/* Sample Demo Data Banner when empty */}
+      {stats.totalMeetings === 0 && onLoadDemo && (
+        <div className="p-5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+              <Sparkles className="w-5 h-5 text-indigo-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Explore with Sample Meeting Data</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Load 3 realistic meetings to test cross-meeting accountability tracking, decisions, and unresolved blocker extraction.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onLoadDemo}
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-2 shadow-md shadow-indigo-600/25 shrink-0"
+          >
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>Load Demo Data</span>
+          </button>
+        </div>
+      )}
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {/* Total Meetings */}
@@ -327,28 +352,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="space-y-3">
-              {meetings.slice(0, 3).map((meeting) => (
-                <div
-                  key={meeting.id}
-                  onClick={() => onSelectMeeting(meeting.id)}
-                  className="p-3 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-700/50 hover:border-indigo-500/40 cursor-pointer transition-all group"
-                >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-slate-200 group-hover:text-indigo-300 line-clamp-1">
-                      {meeting.title}
-                    </span>
-                    <span className="text-[11px] text-slate-400 shrink-0 ml-2">{meeting.date}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 line-clamp-2 mt-1">
-                    {meeting.summary}
-                  </p>
-                  <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400 font-medium">
-                    <span>{meeting.participants.length} attendees</span>
-                    <span>•</span>
-                    <span className="text-indigo-400">Verifiable transcript</span>
-                  </div>
+              {meetings.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400 rounded-xl bg-slate-800/20 border border-dashed border-slate-800 space-y-2">
+                  <p>No meetings ingested yet.</p>
+                  <button
+                    onClick={() => onNavigate('new-meeting')}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300"
+                  >
+                    <span>Ingest your first meeting</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-              ))}
+              ) : (
+                meetings.slice(0, 3).map((meeting) => (
+                  <div
+                    key={meeting.id}
+                    onClick={() => onSelectMeeting(meeting.id)}
+                    className="p-3 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-700/50 hover:border-indigo-500/40 cursor-pointer transition-all group"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-200 group-hover:text-indigo-300 line-clamp-1">
+                        {meeting.title}
+                      </span>
+                      <span className="text-[11px] text-slate-400 shrink-0 ml-2">{meeting.date}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 line-clamp-2 mt-1">
+                      {meeting.summary}
+                    </p>
+                    <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400 font-medium">
+                      <span>{meeting.participants.length} attendees</span>
+                      <span>•</span>
+                      <span className="text-indigo-400">Verifiable transcript</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

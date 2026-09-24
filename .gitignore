@@ -16,6 +16,7 @@ frontend/.env
 frontend/.env.local
 backend/.env
 backend/.env.local
+backend/data/
 
 # Logs
 npm-debug.log*

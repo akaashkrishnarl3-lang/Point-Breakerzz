@@ -1,4 +1,4 @@
-import { Meeting, ActionItem, Decision, UnresolvedIssue } from '../types';
+import { Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats } from '../types';
 
 export const DEMO_MEETINGS: Meeting[] = [
   {
@@ -522,19 +522,35 @@ Marcus Vance [09:38 AM]: The enterprise SSO SAML provider is still undecided. We
     date: '2026-11-02',
     participants: 'Elena Rostova, David Kim, Maya Lin, Alex Chen',
     transcript: `Alex Chen [10:00 AM]: Welcome to the Platform V2 design session. Let's make concrete decisions today. David, what is our verdict on message brokers?
-
 David Kim [10:02 AM]: After testing RabbitMQ and Apache Kafka, Kafka provides the replayability and partition scaling we need for event sourcing. We decided to use Apache Kafka as our central event stream.
-
 Alex Chen [10:04 AM]: Excellent. Let's record that decision. David, will you own the cluster provisioning?
-
 David Kim [10:05 AM]: David will configure the Kafka broker cluster on Kubernetes by Thursday.
-
 Elena Rostova [10:07 AM]: Elena will build the event schema validation library using Protocol Buffers by next Tuesday.
-
 Maya Lin [10:09 AM]: Should we encrypt event payloads at the producer level or broker disk level?
-
 David Kim [10:10 AM]: Event payload encryption methodology is still undecided until security completes compliance review.
-
 Maya Lin [10:12 AM]: Someone should probably look at open telemetry distributed tracing headers.`
   }
 ];
+
+export const getDemoStats = (): SystemStats => {
+  const completed = DEMO_ACTION_ITEMS.filter((a) => a.status === 'COMPLETED').length;
+  const overdue = DEMO_ACTION_ITEMS.filter((a) => a.status === 'OVERDUE').length;
+  const carriedOver = DEMO_ACTION_ITEMS.filter(
+    (a) => a.status === 'CARRIED_OVER' || (a.history && a.history.some((h) => h.status === 'CARRIED_OVER'))
+  ).length;
+  const ambiguous = DEMO_ACTION_ITEMS.filter((a) => a.isAmbiguous || a.status === 'AMBIGUOUS').length;
+  const open = DEMO_ACTION_ITEMS.filter((a) => a.status === 'NEW' || a.status === 'CARRIED_OVER').length;
+  const unresolved = DEMO_UNRESOLVED.filter((u) => u.status === 'UNRESOLVED').length;
+
+  return {
+    totalMeetings: DEMO_MEETINGS.length,
+    totalActionItems: DEMO_ACTION_ITEMS.length,
+    openItems: open,
+    carriedOverItems: carriedOver,
+    completedItems: completed,
+    overdueItems: overdue,
+    ambiguousItems: ambiguous,
+    unresolvedIssues: unresolved
+  };
+};
+

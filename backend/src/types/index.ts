@@ -1,3 +1,17 @@
+export interface User {
+  id: string;
+  google_sub?: string;
+  password?: string;
+  name: string;
+  email: string;
+  profile_picture?: string;
+  provider: 'google' | 'email';
+  is_demo?: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string;
+}
+
 export type ActionItemStatus = 'NEW' | 'CARRIED_OVER' | 'COMPLETED' | 'OVERDUE' | 'AMBIGUOUS';
 
 export interface ActionItemHistoryPoint {
@@ -11,6 +25,8 @@ export interface ActionItemHistoryPoint {
 
 export interface ActionItem {
   id: string;
+  userId?: string;
+  demo_key?: string;
   meetingId: string;
   meetingTitle?: string;
   meetingDate?: string;
@@ -32,6 +48,8 @@ export interface ActionItem {
 
 export interface Decision {
   id: string;
+  userId?: string;
+  demo_key?: string;
   meetingId: string;
   meetingTitle?: string;
   meetingDate?: string;
@@ -42,6 +60,8 @@ export interface Decision {
 
 export interface UnresolvedIssue {
   id: string;
+  userId?: string;
+  demo_key?: string;
   meetingId: string;
   meetingTitle?: string;
   meetingDate?: string;
@@ -62,6 +82,8 @@ export interface UnresolvedIssue {
 
 export interface Meeting {
   id: string;
+  userId?: string;
+  demo_key?: string;
   title: string;
   date: string;
   participants: string[];

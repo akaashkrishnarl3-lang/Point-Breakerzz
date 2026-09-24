@@ -3,51 +3,56 @@ import { dataStore } from '../models/dataStore.js';
 import { reconcileCrossMeetingItems, reconcileUnresolvedIssues } from './crossMeetingTracker.js';
 
 export class StorageService {
-  static getMeetings(): Meeting[] {
-    return dataStore.getMeetings();
+  static getMeetings(userId: string): Meeting[] {
+    return dataStore.getMeetings(userId);
   }
 
-  static getMeetingById(id: string) {
-    return dataStore.getMeetingById(id);
+  static getMeetingById(userId: string, id: string) {
+    return dataStore.getMeetingById(userId, id);
   }
 
-  static getActionItems(filters?: { meetingId?: string; status?: string; owner?: string; search?: string }): ActionItem[] {
-    return dataStore.getActions(filters);
+  static getActionItems(userId: string, filters?: { meetingId?: string; status?: string; owner?: string; search?: string }): ActionItem[] {
+    return dataStore.getActions(userId, filters);
   }
 
-  static updateActionStatus(id: string, status: ActionItem['status']): ActionItem | null {
-    return dataStore.updateActionStatus(id, status);
+  static updateActionStatus(userId: string, id: string, status: ActionItem['status']): ActionItem | null {
+    return dataStore.updateActionStatus(userId, id, status);
   }
 
-  static getDecisions(): Decision[] {
-    return dataStore.getDecisions();
+  static getDecisions(userId: string): Decision[] {
+    return dataStore.getDecisions(userId);
   }
 
-  static getUnresolvedIssues(): UnresolvedIssue[] {
-    return dataStore.getUnresolved();
+  static getUnresolvedIssues(userId: string): UnresolvedIssue[] {
+    return dataStore.getUnresolved(userId);
   }
 
-  static getSystemStats(): SystemStats {
-    return dataStore.getSystemStats();
+  static getSystemStats(userId: string): SystemStats {
+    return dataStore.getSystemStats(userId);
   }
 
-  static resetToDemo(): void {
-    dataStore.seedDemoData(true);
+  static loadDemoData(userId: string) {
+    return dataStore.loadDemoData(userId);
   }
 
-  static clearAll(): void {
-    dataStore.clearAll();
+  static resetToDemo(userId: string): void {
+    dataStore.resetDemoData(userId);
   }
 
-  static exportBackup(): string {
-    return dataStore.exportBackup();
+  static clearAll(userId: string): void {
+    dataStore.clearUserData(userId);
   }
 
-  static importBackup(data: any): boolean {
-    return dataStore.importBackup(data);
+  static exportBackup(userId: string): string {
+    return dataStore.exportBackup(userId);
+  }
+
+  static importBackup(userId: string, data: any): boolean {
+    return dataStore.importBackup(userId, data);
   }
 
   static saveNewMeeting(
+    userId: string,
     meetingData: {
       title: string;
       date: string;
@@ -61,12 +66,13 @@ export class StorageService {
     newDecisions: Decision[];
     newUnresolved: UnresolvedIssue[];
   } {
-    const existingActions = dataStore.getActions();
-    const existingUnresolved = dataStore.getUnresolved();
+    const existingActions = dataStore.getActions(userId);
+    const existingUnresolved = dataStore.getUnresolved(userId);
 
     const meetingId = `meet-${Date.now()}`;
     const newMeeting: Meeting = {
       id: meetingId,
+      userId,
       title: meetingData.title,
       date: meetingData.date,
       participants: meetingData.participants,
@@ -78,7 +84,7 @@ export class StorageService {
       createdAt: new Date().toISOString()
     };
 
-    // Reconcile cross-meeting action items
+    // Reconcile cross-meeting action items against user's historical actions
     const { reconciledNewItems, updatedHistoricalItems } = reconcileCrossMeetingItems(
       newMeeting,
       extraction.action_items,
@@ -88,6 +94,7 @@ export class StorageService {
     // Save Decisions
     const newDecisions: Decision[] = extraction.decisions.map((d, idx) => ({
       id: `dec-${Date.now()}-${idx}`,
+      userId,
       meetingId: newMeeting.id,
       meetingTitle: newMeeting.title,
       meetingDate: newMeeting.date,
@@ -96,15 +103,20 @@ export class StorageService {
       createdAt: new Date().toISOString()
     }));
 
-    // Reconcile Unresolved issues
+    // Reconcile Unresolved issues against user's historical issues
     const { reconciledNewIssues, updatedHistoricalIssues } = reconcileUnresolvedIssues(
       newMeeting,
       extraction.unresolved_issues,
       existingUnresolved
     );
 
+    // Tag reconciled items with userId
+    for (const a of reconciledNewItems) a.userId = userId;
+    for (const u of reconciledNewIssues) u.userId = userId;
+
     // Persist to store
     dataStore.addMeeting(
+      userId,
       newMeeting,
       reconciledNewItems,
       updatedHistoricalItems,

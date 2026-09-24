@@ -1,11 +1,13 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { StorageService } from '../services/storageService.js';
 import { ActionItemStatus } from '../types/index.js';
+import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 
-export async function getActions(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getActions(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
+    const userId = req.user!.id;
     const { meetingId, status, owner, search } = req.query;
-    const actions = StorageService.getActionItems({
+    const actions = StorageService.getActionItems(userId, {
       meetingId: meetingId as string | undefined,
       status: status as string | undefined,
       owner: owner as string | undefined,
@@ -17,8 +19,9 @@ export async function getActions(req: Request, res: Response, next: NextFunction
   }
 }
 
-export async function updateActionStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function updateActionStatus(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
+    const userId = req.user!.id;
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const { status } = req.body;
 
@@ -28,7 +31,7 @@ export async function updateActionStatus(req: Request, res: Response, next: Next
       return;
     }
 
-    const updated = StorageService.updateActionStatus(id, status);
+    const updated = StorageService.updateActionStatus(userId, id, status);
     if (!updated) {
       res.status(404).json({ success: false, error: `Action item with ID ${id} not found.` });
       return;

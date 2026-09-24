@@ -1,5 +1,6 @@
-import { Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats, ExtractionResult, ActionItemStatus } from '../types';
-import { DEMO_MEETINGS, DEMO_ACTION_ITEMS, DEMO_DECISIONS, DEMO_UNRESOLVED } from '../data/demoData';
+import { Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats, ExtractionResult, ActionItemStatus, User } from '../types';
+
+const TOKEN_KEY = 'meetflow_auth_token';
 
 const getApiBaseUrl = (): string => {
   const envUrl =
@@ -18,6 +19,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers as Record<string, string> || {})
   };
 
+  const token = ApiService.getToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(url, {
     ...options,
     headers
@@ -31,6 +37,14 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
         errorMsg = errJson.error;
       }
     } catch {}
+
+    if (response.status === 401) {
+      // If unauthorized on protected route, clean local token
+      if (!endpoint.includes('/auth/google')) {
+        ApiService.clearToken();
+      }
+    }
+
     throw new Error(errorMsg);
   }
 
@@ -42,20 +56,124 @@ export class ApiService {
     return API_BASE;
   }
 
+  // Token management
+  public static getToken(): string | null {
+    try {
+      return localStorage.getItem(TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  public static setToken(token: string): void {
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch (e) {
+      console.error('Failed to save token to localStorage:', e);
+    }
+  }
+
+  public static clearToken(): void {
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+    } catch (e) {
+      console.error('Failed to remove token from localStorage:', e);
+    }
+  }
+
+  // Authentication
+  public static async loginWithGoogle(credential: string): Promise<{ user: User; token: string }> {
+    const res = await request<{
+      success: boolean;
+      data: { user: User; token: string };
+    }>('/api/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential })
+    });
+
+    if (res.data && res.data.token) {
+      ApiService.setToken(res.data.token);
+    }
+    return res.data;
+  }
+
+  public static async registerWithEmail(name: string, email: string, password: string): Promise<{ user: User; token: string }> {
+    const res = await request<{
+      success: boolean;
+      data: { user: User; token: string };
+    }>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password })
+    });
+
+    if (res.data && res.data.token) {
+      ApiService.setToken(res.data.token);
+    }
+    return res.data;
+  }
+
+  public static async loginWithEmail(email: string, password: string): Promise<{ user: User; token: string }> {
+    const res = await request<{
+      success: boolean;
+      data: { user: User; token: string };
+    }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+
+    if (res.data && res.data.token) {
+      ApiService.setToken(res.data.token);
+    }
+    return res.data;
+  }
+
+  public static async loginWithDemo(): Promise<{ user: User; token: string }> {
+    const res = await request<{
+      success: boolean;
+      data: { user: User; token: string };
+    }>('/api/auth/demo', {
+      method: 'POST'
+    });
+
+    if (res.data && res.data.token) {
+      ApiService.setToken(res.data.token);
+    }
+    return res.data;
+  }
+
+  public static async getCurrentUser(): Promise<User> {
+    const res = await request<{
+      success: boolean;
+      data: { user: User };
+    }>('/api/auth/me');
+    return res.data.user;
+  }
+
+  public static async logout(): Promise<void> {
+    try {
+      await request('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.warn('Backend logout failed, clearing client session anyway:', err);
+    } finally {
+      ApiService.clearToken();
+    }
+  }
+
   // Health and System Status
   static async checkHealth(): Promise<{
     status: string;
     service: string;
+    googleConfigured: boolean;
     geminiConfigured: boolean;
     timestamp: string;
   }> {
     try {
       return await request('/api/health');
     } catch (err) {
-      console.warn('Backend /api/health check failed, server might be offline:', err);
       return {
         status: 'offline',
-        service: 'MeetFlow AI Backend API (Local Fallback)',
+        service: 'MeetFlow AI Backend API (Offline)',
+        googleConfigured: false,
         geminiConfigured: false,
         timestamp: new Date().toISOString()
       };
@@ -103,14 +221,14 @@ export class ApiService {
     return res.data;
   }
 
-  // Retrieval
+  // Retrieval (User-specific)
   static async getMeetings(): Promise<Meeting[]> {
     try {
       const res = await request<{ success: boolean; data: Meeting[] }>('/api/meetings');
-      return res.data;
+      return res.data || [];
     } catch (err) {
-      console.warn('API getMeetings failed, using fallback cache:', err);
-      return DEMO_MEETINGS;
+      console.error('API getMeetings error:', err);
+      return [];
     }
   }
 
@@ -120,25 +238,16 @@ export class ApiService {
     decisions: Decision[];
     unresolved: UnresolvedIssue[];
   }> {
-    try {
-      const res = await request<{
-        success: boolean;
-        data: {
-          meeting: Meeting;
-          actions: ActionItem[];
-          decisions: Decision[];
-          unresolved: UnresolvedIssue[];
-        };
-      }>(`/api/meetings/${id}`);
-      return res.data;
-    } catch (err) {
-      console.warn(`API getMeetingById(${id}) failed, fallback:`, err);
-      const meeting = DEMO_MEETINGS.find(m => m.id === id);
-      const actions = DEMO_ACTION_ITEMS.filter(a => a.meetingId === id);
-      const decisions = DEMO_DECISIONS.filter(d => d.meetingId === id);
-      const unresolved = DEMO_UNRESOLVED.filter(u => u.meetingId === id);
-      return { meeting, actions, decisions, unresolved };
-    }
+    const res = await request<{
+      success: boolean;
+      data: {
+        meeting: Meeting;
+        actions: ActionItem[];
+        decisions: Decision[];
+        unresolved: UnresolvedIssue[];
+      };
+    }>(`/api/meetings/${id}`);
+    return res.data;
   }
 
   static async getActionItems(filters?: { meetingId?: string; status?: string; owner?: string; search?: string }): Promise<ActionItem[]> {
@@ -151,10 +260,10 @@ export class ApiService {
 
       const qs = params.toString() ? `?${params.toString()}` : '';
       const res = await request<{ success: boolean; data: ActionItem[] }>(`/api/actions${qs}`);
-      return res.data;
+      return res.data || [];
     } catch (err) {
-      console.warn('API getActionItems failed, using fallback:', err);
-      return DEMO_ACTION_ITEMS;
+      console.error('API getActionItems error:', err);
+      return [];
     }
   }
 
@@ -174,45 +283,69 @@ export class ApiService {
   static async getDecisions(): Promise<Decision[]> {
     try {
       const res = await request<{ success: boolean; data: Decision[] }>('/api/decisions');
-      return res.data;
+      return res.data || [];
     } catch (err) {
-      console.warn('API getDecisions failed, using fallback:', err);
-      return DEMO_DECISIONS;
+      console.error('API getDecisions error:', err);
+      return [];
     }
   }
 
   static async getUnresolvedIssues(): Promise<UnresolvedIssue[]> {
     try {
       const res = await request<{ success: boolean; data: UnresolvedIssue[] }>('/api/unresolved');
-      return res.data;
+      return res.data || [];
     } catch (err) {
-      console.warn('API getUnresolvedIssues failed, using fallback:', err);
-      return DEMO_UNRESOLVED;
+      console.error('API getUnresolvedIssues error:', err);
+      return [];
     }
   }
 
   static async getSystemStats(): Promise<SystemStats> {
     try {
       const res = await request<{ success: boolean; data: SystemStats }>('/api/stats');
-      return res.data;
+      return res.data || {
+        totalMeetings: 0,
+        totalActionItems: 0,
+        openItems: 0,
+        carriedOverItems: 0,
+        completedItems: 0,
+        overdueItems: 0,
+        ambiguousItems: 0,
+        unresolvedIssues: 0
+      };
     } catch (err) {
-      console.warn('API getSystemStats failed, calculating fallback:', err);
+      console.error('API getSystemStats error:', err);
       return {
-        totalMeetings: DEMO_MEETINGS.length,
-        totalActionItems: DEMO_ACTION_ITEMS.length,
-        openItems: DEMO_ACTION_ITEMS.filter(a => a.status === 'NEW').length,
-        carriedOverItems: DEMO_ACTION_ITEMS.filter(a => a.status === 'CARRIED_OVER').length,
-        completedItems: DEMO_ACTION_ITEMS.filter(a => a.status === 'COMPLETED').length,
-        overdueItems: DEMO_ACTION_ITEMS.filter(a => a.status === 'OVERDUE').length,
-        ambiguousItems: DEMO_ACTION_ITEMS.filter(a => a.status === 'AMBIGUOUS' || a.isAmbiguous).length,
-        unresolvedIssues: DEMO_UNRESOLVED.filter(u => u.status === 'UNRESOLVED').length
+        totalMeetings: 0,
+        totalActionItems: 0,
+        openItems: 0,
+        carriedOverItems: 0,
+        completedItems: 0,
+        overdueItems: 0,
+        ambiguousItems: 0,
+        unresolvedIssues: 0
       };
     }
   }
 
-  // System actions
+  // System actions (scoped to user)
+  static async loadDemoData(): Promise<{ success: boolean; message: string; alreadyLoaded: boolean; stats: SystemStats }> {
+    const res = await request<{
+      success: boolean;
+      message: string;
+      alreadyLoaded: boolean;
+      data: SystemStats;
+    }>('/api/demo/load', { method: 'POST' });
+    return {
+      success: res.success,
+      message: res.message,
+      alreadyLoaded: res.alreadyLoaded,
+      stats: res.data
+    };
+  }
+
   static async resetToDemo(): Promise<void> {
-    await request('/api/reset-demo', { method: 'POST' });
+    await request('/api/demo/reset', { method: 'POST' });
   }
 
   static async clearAll(): Promise<void> {
@@ -220,7 +353,11 @@ export class ApiService {
   }
 
   static async exportBackup(): Promise<string> {
-    const res = await fetch(`${API_BASE}/api/backup`);
+    const res = await fetch(`${API_BASE}/api/backup`, {
+      headers: {
+        Authorization: `Bearer ${ApiService.getToken() || ''}`
+      }
+    });
     return res.text();
   }
 

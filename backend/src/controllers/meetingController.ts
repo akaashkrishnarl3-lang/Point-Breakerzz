@@ -1,21 +1,24 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { StorageService } from '../services/storageService.js';
 import { extractMeetingData } from '../services/extractorService.js';
+import { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { logger } from '../utils/logger.js';
 
-export async function getMeetings(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getMeetings(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const meetings = StorageService.getMeetings();
+    const userId = req.user!.id;
+    const meetings = StorageService.getMeetings(userId);
     res.json({ success: true, data: meetings });
   } catch (err) {
     next(err);
   }
 }
 
-export async function getMeetingById(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getMeetingById(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
+    const userId = req.user!.id;
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const meetingData = StorageService.getMeetingById(id);
+    const meetingData = StorageService.getMeetingById(userId, id);
     if (!meetingData.meeting) {
       res.status(404).json({ success: false, error: `Meeting with ID ${id} not found.` });
       return;
@@ -26,10 +29,10 @@ export async function getMeetingById(req: Request, res: Response, next: NextFunc
   }
 }
 
-export async function extractMeeting(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function extractMeeting(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { transcript, title } = req.body;
-    logger.info(`Extracting meeting accountability data for "${title || 'Untitled Meeting'}"`);
+    logger.info(`Extracting meeting accountability data for "${title || 'Untitled Meeting'}" (User: ${req.user!.id})`);
     const extraction = await extractMeetingData(transcript, title || 'Untitled Meeting');
     res.json({ success: true, data: extraction });
   } catch (err) {
@@ -37,8 +40,9 @@ export async function extractMeeting(req: Request, res: Response, next: NextFunc
   }
 }
 
-export async function createMeeting(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function createMeeting(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
+    const userId = req.user!.id;
     const { title, date, participants, transcript, extraction } = req.body;
 
     let finalExtraction = extraction;
@@ -54,6 +58,7 @@ export async function createMeeting(req: Request, res: Response, next: NextFunct
       : ['Team Attendees'];
 
     const result = StorageService.saveNewMeeting(
+      userId,
       {
         title: title.trim(),
         date: date || new Date().toISOString().split('T')[0],
@@ -63,7 +68,7 @@ export async function createMeeting(req: Request, res: Response, next: NextFunct
       finalExtraction
     );
 
-    logger.info(`Successfully created meeting ${result.meeting.id} with ${result.newActions.length} action items.`);
+    logger.info(`Successfully created meeting ${result.meeting.id} for user ${userId} with ${result.newActions.length} action items.`);
     res.status(201).json({ success: true, data: result });
   } catch (err) {
     next(err);
