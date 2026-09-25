@@ -1,6 +1,4 @@
-import { Meeting, ActionItem, Decision, UnresolvedIssue, MeetingQAResponse, MeetingCitation } from '../types/index.js';
-import { config } from '../utils/env.js';
-import { logger } from '../utils/logger.js';
+import { Meeting, ActionItem, Decision, UnresolvedIssue, MeetingQAResponse, MeetingCitation } from '../types';
 
 export interface MeetingContext {
   meeting: Meeting;
@@ -11,13 +9,13 @@ export interface MeetingContext {
 }
 
 /**
- * Main Grounded Q&A Entrypoint
- * Enforces strict zero-hallucination and grounded retrieval.
+ * Client-Side Deterministic Grounded RAG Engine
+ * Guarantees zero-hallucination compliance when running in Demo Mode or offline.
  */
-export async function askMeetingQuestion(
+export function runLocalGroundedQA(
   context: MeetingContext,
   question: string
-): Promise<MeetingQAResponse> {
+): MeetingQAResponse {
   const qClean = question.trim();
   if (!qClean) {
     return {
@@ -29,143 +27,7 @@ export async function askMeetingQuestion(
     };
   }
 
-  // 1. Try Gemini Grounded RAG if API key is present
-  const apiKey = config.geminiApiKey;
-  if (apiKey && apiKey.trim().length > 10) {
-    try {
-      logger.info(`Running Gemini Grounded Q&A for meeting "${context.meeting.title}" (Q: "${qClean}")`);
-      const response = await callGeminiGroundedQA(context, qClean, apiKey.trim());
-      if (response && response.answer) {
-        return response;
-      }
-    } catch (err) {
-      logger.warn('Gemini Q&A call failed, falling back to Intelligent Local Grounded Engine:', err);
-    }
-  }
-
-  // 2. Intelligent Grounded Local RAG Engine
-  logger.info(`Running Local Grounded RAG Q&A for meeting "${context.meeting.title}" (Q: "${qClean}")`);
-  return runLocalGroundedQA(context, qClean);
-}
-
-/**
- * Gemini Grounded RAG with strict zero-hallucination system prompt
- */
-async function callGeminiGroundedQA(
-  context: MeetingContext,
-  question: string,
-  apiKey: string
-): Promise<MeetingQAResponse> {
-  if (!apiKey.startsWith('AIzaSy')) {
-    throw new Error('Key is not a standard Google AI Studio key (AIzaSy...), using intelligent local grounded engine');
-  }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
-  const promptContext = `MEETING TITLE: ${context.meeting.title}
-MEETING DATE: ${context.meeting.date}
-PARTICIPANTS: ${context.meeting.participants.join(', ')}
-SUMMARY: ${context.meeting.summary || 'N/A'}
-
-LINE-NUMBERED TRANSCRIPT:
-${context.meeting.transcript
-  .split(/\r?\n/)
-  .map((l, i) => `[Line ${i + 1}] ${l}`)
-  .join('\n')}
-
-RECORDED DECISIONS:
-${context.decisions.map((d, i) => `${i + 1}. Decision: ${d.decision} | Evidence: "${d.evidenceText}" (Line ${d.sourceLine || 'N/A'})`).join('\n') || 'None'}
-
-RECORDED ACTION ITEMS:
-${context.actions.map((a, i) => `${i + 1}. Task: ${a.task} | Owner: ${a.owner || 'Not specified'} | Deadline: ${a.deadline || 'Not specified'} | Status: ${a.status} | Evidence: "${a.evidenceText}" (Line ${a.sourceLine || 'N/A'})`).join('\n') || 'None'}
-
-RECORDED UNRESOLVED ISSUES:
-${context.unresolved.map((u, i) => `${i + 1}. Issue: ${u.issue} | Owner: ${u.owner || 'Not specified'} | Status: ${u.status} | Evidence: "${u.evidenceText}" (Line ${u.sourceLine || 'N/A'})`).join('\n') || 'None'}`;
-
-  const systemInstruction = `You are the MeetFlow AI Meeting Assistant.
-
-Answer questions only using the meeting context supplied to you.
-
-The meeting context contains:
-- meeting title, date, participants, summary
-- verbatim line-numbered transcript
-- recorded decisions
-- recorded action items (with owner, deadline, and status)
-- recorded unresolved issues
-
-CRITICAL ZERO-HALLUCINATION RULES:
-1. Answer using ONLY information explicitly stated in the provided transcript or facts.
-2. Never invent information. Never assume missing information.
-3. Never create names, dates, deadlines, decisions, tasks, responsibilities, or statuses that are not supported by the supplied meeting context.
-4. If the requested information is not present in this meeting, say EXACTLY:
-   "I couldn't find that information in this meeting."
-5. If the question is outside the scope of the meeting (e.g. general world knowledge, geography, weather, sports, celebrities, math), say EXACTLY:
-   "That question is outside the information available for this meeting. I can answer questions about the meeting, decisions, action items, owners, deadlines, unresolved issues, and related accountability information."
-6. If the user asks an ambiguous question like "Who is responsible?" without specifying which task, and multiple owners exist, ask for clarification:
-   "There are multiple owners in this meeting. Please specify the task or person you mean."
-7. If the information is only partially available (for example, the meeting mentions an owner for a task but no deadline), answer only the supported portion and clearly state what is missing:
-   Example: "The meeting says Rahul will complete the API integration, but no specific deadline was mentioned."
-8. When someone asks if a task was completed (e.g. "Did Rahul finish the API integration?"), if the meeting does not state completion, do NOT say yes or no; state clearly that the meeting does not specify whether it was completed.
-9. When possible, cite or quote the exact relevant meeting evidence with transcript line numbers.
-10. Return strictly in JSON format matching:
-{
-  "answer": "Direct, clear, concise answer strictly grounded in the meeting.",
-  "citations": [
-    {
-      "text": "Exact verbatim quote from the transcript",
-      "sourceLine": 4,
-      "relevance": "Why this quote supports the answer"
-    }
-  ],
-  "confidence": 0.98,
-  "grounded": true
-}`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: `${systemInstruction}\n\n${promptContext}\n\nUSER QUESTION: ${question}\n\nRespond in JSON only.` }]
-        }
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1
-      }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API error ${response.status}`);
-  }
-
-  const json: any = await response.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error('Empty response from Gemini');
-  }
-
-  const parsed = JSON.parse(text);
-  return {
-    question,
-    answer: parsed.answer || "I couldn't find that information in this meeting.",
-    citations: Array.isArray(parsed.citations) ? parsed.citations : [],
-    confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.95,
-    grounded: true
-  };
-}
-
-/**
- * Intelligent Deterministic Grounded RAG Engine
- * Guarantees 100% zero-hallucination compliance with all rules when operating locally or offline.
- */
-export function runLocalGroundedQA(
-  context: MeetingContext,
-  question: string
-): MeetingQAResponse {
-  const qLower = question.toLowerCase().trim();
+  const qLower = qClean.toLowerCase();
   const rawTranscript = context.meeting.transcript || '';
   const lines = rawTranscript
     .split(/\r?\n/)
@@ -265,7 +127,6 @@ export function runLocalGroundedQA(
       summarySections.push(`\n**Unresolved Issues (${context.unresolved.length})**:\n` + context.unresolved.map(u => `• ${u.issue} (Status: ${u.status})`).join('\n'));
     }
 
-    // Add first 2 representative citations
     if (context.decisions[0]) {
       citations.push({
         text: context.decisions[0].evidenceText,
@@ -328,7 +189,6 @@ export function runLocalGroundedQA(
     qLower.includes('postgresql') ||
     qLower.includes('postgres')
   ) {
-    // Specific topic decision (e.g. database, postgresql, framework)
     const specificDecision = context.decisions.find(d => {
       const dLower = d.decision.toLowerCase();
       if (qLower.includes('database') || qLower.includes('postgres')) {
@@ -353,7 +213,6 @@ export function runLocalGroundedQA(
       };
     }
 
-    // Generic decisions query
     if (context.decisions.length > 0) {
       const decisionList = context.decisions.map(d => `• ${d.decision}`).join('\n');
       context.decisions.forEach(d => {
@@ -390,7 +249,6 @@ export function runLocalGroundedQA(
     qLower.includes('still pending') ||
     qLower.includes('hosting platform')
   ) {
-    // Specific topic in unresolved issues (e.g. hosting)
     const specificUnresolved = context.unresolved.find(u => {
       const uLower = u.issue.toLowerCase();
       if (qLower.includes('hosting')) return uLower.includes('hosting');
@@ -413,7 +271,6 @@ export function runLocalGroundedQA(
       };
     }
 
-    // Generic unresolved query
     const openIssues = context.unresolved.filter(u => u.status === 'UNRESOLVED');
     if (openIssues.length > 0) {
       const issueList = openIssues.map(u => `• ${u.issue}${u.owner ? ` (Owner: ${u.owner})` : ''}`).join('\n');
@@ -459,7 +316,7 @@ export function runLocalGroundedQA(
     qLower.includes('finish') ||
     qLower.includes('completed') ||
     qLower.includes('did ') ||
-    qLower.includes('was ') && (qLower.includes('done') || qLower.includes('completed')) ||
+    (qLower.includes('was ') && (qLower.includes('done') || qLower.includes('completed'))) ||
     qLower.includes('status of');
 
   if (isStatusOrCompletionQuery) {
@@ -523,7 +380,6 @@ export function runLocalGroundedQA(
     qLower.includes('whose responsibility');
 
   if (isOwnerQuery) {
-    // Check Action Items first
     const matchedAction = findBestMatchingAction(context.actions, qLower);
     if (matchedAction) {
       citations.push({
@@ -551,7 +407,6 @@ export function runLocalGroundedQA(
       }
     }
 
-    // Check Unresolved Issues (e.g., "Who is responsible for hosting?")
     const matchedUnresolved = context.unresolved.find(u => {
       const uLower = u.issue.toLowerCase();
       const words = uLower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 3);
@@ -581,35 +436,6 @@ export function runLocalGroundedQA(
           confidence: 0.96,
           grounded: true
         };
-      }
-    }
-
-    // Check Transcript lines for ownership pattern
-    const ownerLineMatch = lines.find(l => {
-      const lineLow = l.line.toLowerCase();
-      return (qLower.includes('presentation') && lineLow.includes('presentation')) ||
-             (qLower.includes('api') && lineLow.includes('api')) ||
-             (qLower.includes('mobile') && lineLow.includes('mobile'));
-    });
-
-    if (ownerLineMatch) {
-      citations.push({
-        text: ownerLineMatch.line,
-        sourceLine: ownerLineMatch.lineNum,
-        relevance: 'Transcript statement'
-      });
-
-      // Extract speaker or person
-      for (const p of context.meeting.participants) {
-        if (ownerLineMatch.line.toLowerCase().includes(p.toLowerCase())) {
-          return {
-            question,
-            answer: `${p} is responsible based on the transcript: "${ownerLineMatch.line}".`,
-            citations,
-            confidence: 0.92,
-            grounded: true
-          };
-        }
       }
     }
   }
@@ -654,7 +480,6 @@ export function runLocalGroundedQA(
   }
 
   // ================= 10. SPECIFIC PERSON ASSIGNMENTS =================
-  // e.g. "What was assigned to Rahul?", "What are Priya's tasks?", "Arun's tasks"
   const matchedPerson = context.meeting.participants.find(p => {
     const pLow = p.toLowerCase();
     const tokens = pLow.split(/\s+/).filter(w => w.length > 2);
@@ -817,7 +642,6 @@ export function runLocalGroundedQA(
     }
 
     const coverageRatio = queryTerms.length > 0 ? maxMatchCount / queryTerms.length : 0;
-    // Require substantial keyword alignment to prevent false positive guesses
     if (bestLine && maxMatchCount >= 2 && coverageRatio >= 0.5) {
       citations.push({
         text: bestLine.line,
@@ -845,14 +669,10 @@ export function runLocalGroundedQA(
   };
 }
 
-/**
- * Finds the action item that best matches a natural language query
- */
 function findBestMatchingAction(actions: ActionItem[], query: string): ActionItem | undefined {
   if (actions.length === 0) return undefined;
   const qClean = query.toLowerCase();
 
-  // 1. Direct key phrase shortcuts
   if (qClean.includes('api')) {
     const act = actions.find(a => a.task.toLowerCase().includes('api'));
     if (act) return act;
@@ -874,7 +694,6 @@ function findBestMatchingAction(actions: ActionItem[], query: string): ActionIte
     if (act) return act;
   }
 
-  // 2. Token overlap score
   const qTokens = qClean.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
   let bestAct: ActionItem | undefined = undefined;
   let bestScore = 0;
@@ -894,9 +713,6 @@ function findBestMatchingAction(actions: ActionItem[], query: string): ActionIte
   return bestScore >= 1 ? bestAct : undefined;
 }
 
-/**
- * Helper to locate line number for a given quote in transcript lines
- */
 function findLineForText(lines: { line: string; lineNum: number }[], text: string): number {
   if (!text) return 1;
   const clean = text.toLowerCase().trim();
@@ -905,7 +721,6 @@ function findLineForText(lines: { line: string; lineNum: number }[], text: strin
       return item.lineNum;
     }
   }
-  // Try substring matching if full text is long
   const firstSentence = clean.split(/[.?!]/)[0];
   if (firstSentence && firstSentence.length > 10) {
     for (const item of lines) {

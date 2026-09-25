@@ -109,12 +109,14 @@ export class StorageService {
   static async askMeetingQuestion(userId: string, meetingId: string, question: string): Promise<MeetingQAResponse | null> {
     const meetingData = dataStore.getMeetingById(userId, meetingId);
     if (!meetingData.meeting) return null;
+    const allUserMeetings = dataStore.getMeetings(userId);
     return askGroundedQA(
       {
         meeting: meetingData.meeting,
         actions: meetingData.actions,
         decisions: meetingData.decisions,
-        unresolved: meetingData.unresolved
+        unresolved: meetingData.unresolved,
+        allUserMeetings
       },
       question
     );
