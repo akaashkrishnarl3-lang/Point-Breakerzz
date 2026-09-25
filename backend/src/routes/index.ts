@@ -16,6 +16,7 @@ apiRouter.use('/auth', authRouter);
 // Protected resource endpoints
 apiRouter.use('/meetings', authMiddleware, meetingsRouter);
 apiRouter.use('/actions', authMiddleware, actionsRouter);
+apiRouter.use('/action-items', authMiddleware, actionsRouter);
 apiRouter.use('/decisions', authMiddleware, decisionsRouter);
 apiRouter.use('/unresolved', authMiddleware, unresolvedRouter);
 apiRouter.use('/stats', authMiddleware, statsRouter);

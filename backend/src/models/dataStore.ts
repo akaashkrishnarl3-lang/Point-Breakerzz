@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { User, Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats } from '../types/index.js';
+import { User, Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats, MeetingAnalytics, FilterOptions } from '../types/index.js';
 import { DEMO_MEETINGS, DEMO_ACTION_ITEMS, DEMO_DECISIONS, DEMO_UNRESOLVED } from '../data/demoData.js';
 import { logger } from '../utils/logger.js';
 
@@ -236,6 +236,20 @@ class DataStore {
     return result;
   }
 
+  public getActionById(userId: string, id: string): ActionItem | undefined {
+    return this.actions.find(a => a.id === id && a.userId === userId);
+  }
+
+  public getActionHistory(userId: string, id: string): { action: ActionItem; history: any[]; matches: any[] } | null {
+    const action = this.actions.find(a => a.id === id && a.userId === userId);
+    if (!action) return null;
+    return {
+      action,
+      history: action.history || [],
+      matches: action.matches || []
+    };
+  }
+
   public updateActionStatus(userId: string, id: string, status: ActionItem['status']): ActionItem | null {
     const idx = this.actions.findIndex(a => a.id === id && a.userId === userId);
     if (idx === -1) return null;
@@ -288,6 +302,164 @@ class DataStore {
       overdueItems: userActions.filter(a => a.status === 'OVERDUE').length,
       ambiguousItems: userActions.filter(a => a.status === 'AMBIGUOUS' || a.isAmbiguous).length,
       unresolvedIssues: userUnresolved.filter(u => u.status === 'UNRESOLVED').length
+    };
+  }
+
+  public getMeetingAnalytics(userId: string, filters?: FilterOptions): MeetingAnalytics {
+    let userMeetings = this.meetings.filter(m => m.userId === userId);
+    let userActions = this.getActions(userId);
+    let userUnresolved = this.unresolved.filter(u => u.userId === userId);
+
+    // Apply Date Range Filter
+    if (filters?.dateRange && filters.dateRange !== 'all') {
+      const now = new Date();
+      let cutoff = new Date();
+      if (filters.dateRange === '7d') {
+        cutoff.setDate(now.getDate() - 7);
+      } else if (filters.dateRange === '30d') {
+        cutoff.setDate(now.getDate() - 30);
+      } else if (filters.dateRange === 'custom') {
+        if (filters.startDate) cutoff = new Date(filters.startDate);
+      }
+
+      userMeetings = userMeetings.filter(m => new Date(m.date) >= cutoff);
+      const meetingIds = new Set(userMeetings.map(m => m.id));
+      userActions = userActions.filter(a => meetingIds.has(a.meetingId));
+      userUnresolved = userUnresolved.filter(u => meetingIds.has(u.meetingId));
+    }
+
+    // Apply Meeting Filter
+    if (filters?.meetingId && filters.meetingId !== 'ALL') {
+      userMeetings = userMeetings.filter(m => m.id === filters.meetingId);
+      userActions = userActions.filter(a => a.meetingId === filters.meetingId);
+      userUnresolved = userUnresolved.filter(u => u.meetingId === filters.meetingId);
+    }
+
+    // Apply Owner Filter
+    if (filters?.owner && filters.owner !== 'ALL') {
+      const ownerLower = filters.owner.toLowerCase();
+      userActions = userActions.filter(a => a.owner && a.owner.toLowerCase().includes(ownerLower));
+    }
+
+    // Apply Status Filter
+    if (filters?.status && filters.status !== 'ALL') {
+      userActions = userActions.filter(a => a.status === filters.status);
+    }
+
+    const totalMeetings = userMeetings.length;
+    const totalActionItems = userActions.length;
+    const completedItems = userActions.filter(a => a.status === 'COMPLETED').length;
+    const inProgressItems = userActions.filter(a => a.status === 'IN_PROGRESS').length;
+    const carriedOverItems = userActions.filter(a => a.status === 'CARRIED_OVER').length;
+    const overdueItems = userActions.filter(a => a.status === 'OVERDUE').length;
+    const openItems = userActions.filter(a => a.status === 'NEW').length;
+    const ambiguousItems = userActions.filter(a => a.status === 'AMBIGUOUS' || a.isAmbiguous).length;
+    const unresolvedIssues = userUnresolved.filter(u => u.status === 'UNRESOLVED').length;
+
+    const completionRate = totalActionItems > 0
+      ? Math.round((completedItems / totalActionItems) * 1000) / 10
+      : 0;
+
+    const averageActionItemsPerMeeting = totalMeetings > 0
+      ? Math.round((totalActionItems / totalMeetings) * 10) / 10
+      : 0;
+
+    // Meetings with unresolved commitments
+    const meetingsWithUnresolvedCommitments = userMeetings
+      .map(m => {
+        const meetingUnresolved = userUnresolved.filter(u => u.meetingId === m.id && u.status === 'UNRESOLVED').length;
+        const meetingOverdue = userActions.filter(a => a.meetingId === m.id && a.status === 'OVERDUE').length;
+        return {
+          meetingId: m.id,
+          title: m.title,
+          date: m.date,
+          unresolvedCount: meetingUnresolved,
+          overdueCount: meetingOverdue
+        };
+      })
+      .filter(item => item.unresolvedCount > 0 || item.overdueCount > 0);
+
+    // Status Distribution
+    const statusDistribution = [
+      { status: 'COMPLETED' as const, label: 'Completed', count: completedItems, percentage: totalActionItems ? Math.round((completedItems / totalActionItems) * 100) : 0, color: '#6366F1' },
+      { status: 'IN_PROGRESS' as const, label: 'In Progress', count: inProgressItems, percentage: totalActionItems ? Math.round((inProgressItems / totalActionItems) * 100) : 0, color: '#06B6D4' },
+      { status: 'CARRIED_OVER' as const, label: 'Carried-Over', count: carriedOverItems, percentage: totalActionItems ? Math.round((carriedOverItems / totalActionItems) * 100) : 0, color: '#F59E0B' },
+      { status: 'OVERDUE' as const, label: 'Overdue', count: overdueItems, percentage: totalActionItems ? Math.round((overdueItems / totalActionItems) * 100) : 0, color: '#EF4444' },
+      { status: 'NEW' as const, label: 'New', count: openItems, percentage: totalActionItems ? Math.round((openItems / totalActionItems) * 100) : 0, color: '#10B981' },
+      { status: 'AMBIGUOUS' as const, label: 'Ambiguous', count: ambiguousItems, percentage: totalActionItems ? Math.round((ambiguousItems / totalActionItems) * 100) : 0, color: '#A855F7' }
+    ];
+
+    // Completed vs Pending
+    const completedVsPending = {
+      completed: completedItems,
+      pending: openItems + inProgressItems + carriedOverItems,
+      overdue: overdueItems
+    };
+
+    // Action Items by Meeting
+    const actionItemsByMeeting = userMeetings.map(m => {
+      const actionsForMeeting = userActions.filter(a => a.meetingId === m.id);
+      return {
+        meetingId: m.id,
+        title: m.title,
+        date: m.date,
+        total: actionsForMeeting.length,
+        completed: actionsForMeeting.filter(a => a.status === 'COMPLETED').length,
+        carriedOver: actionsForMeeting.filter(a => a.status === 'CARRIED_OVER').length,
+        overdue: actionsForMeeting.filter(a => a.status === 'OVERDUE').length
+      };
+    });
+
+    // Timeline
+    const timeline = userMeetings
+      .slice()
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .map(m => {
+        const mActions = userActions.filter(a => a.meetingId === m.id);
+        return {
+          date: m.date,
+          meetingTitle: m.title,
+          totalActions: mActions.length,
+          completed: mActions.filter(a => a.status === 'COMPLETED').length,
+          overdue: mActions.filter(a => a.status === 'OVERDUE').length,
+          carriedOver: mActions.filter(a => a.status === 'CARRIED_OVER').length
+        };
+      });
+
+    // Owners Breakdown
+    const ownersMap = new Map<string, { total: number; completed: number; overdue: number; inProgress: number }>();
+    for (const a of userActions) {
+      const owner = a.owner || 'Unassigned';
+      const existing = ownersMap.get(owner) || { total: 0, completed: 0, overdue: 0, inProgress: 0 };
+      existing.total++;
+      if (a.status === 'COMPLETED') existing.completed++;
+      if (a.status === 'OVERDUE') existing.overdue++;
+      if (a.status === 'IN_PROGRESS') existing.inProgress++;
+      ownersMap.set(owner, existing);
+    }
+    const ownersBreakdown = Array.from(ownersMap.entries()).map(([owner, counts]) => ({
+      owner,
+      ...counts
+    }));
+
+    return {
+      totalMeetings,
+      totalActionItems,
+      completedItems,
+      inProgressItems,
+      carriedOverItems,
+      overdueItems,
+      unresolvedIssues,
+      openItems,
+      ambiguousItems,
+      completionRate,
+      averageActionItemsPerMeeting,
+      meetingsWithUnresolvedCommitments,
+      statusDistribution,
+      completedVsPending,
+      actionItemsByMeeting,
+      timeline,
+      ownersBreakdown
     };
   }
 

@@ -23,11 +23,14 @@ export async function updateActionStatus(req: AuthenticatedRequest, res: Respons
   try {
     const userId = req.user!.id;
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const { status } = req.body;
+    let { status } = req.body;
 
-    const validStatuses: ActionItemStatus[] = ['NEW', 'CARRIED_OVER', 'COMPLETED', 'OVERDUE', 'AMBIGUOUS'];
+    // Normalize potential status aliases
+    if (status === 'CARRIED-OVER') status = 'CARRIED_OVER';
+
+    const validStatuses: ActionItemStatus[] = ['NEW', 'IN_PROGRESS', 'CARRIED_OVER', 'COMPLETED', 'OVERDUE', 'AMBIGUOUS'];
     if (!status || !validStatuses.includes(status)) {
-      res.status(400).json({ success: false, error: `Invalid status: ${status}` });
+      res.status(400).json({ success: false, error: `Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}` });
       return;
     }
 
@@ -42,3 +45,19 @@ export async function updateActionStatus(req: AuthenticatedRequest, res: Respons
     next(err);
   }
 }
+
+export async function getActionHistory(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const historyData = StorageService.getActionHistory(userId, id);
+    if (!historyData) {
+      res.status(404).json({ success: false, error: `Action item with ID ${id} not found.` });
+      return;
+    }
+    res.json({ success: true, data: historyData });
+  } catch (err) {
+    next(err);
+  }
+}
+

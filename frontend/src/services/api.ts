@@ -1,4 +1,17 @@
-import { Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats, ExtractionResult, ActionItemStatus, User } from '../types';
+import {
+  Meeting,
+  ActionItem,
+  Decision,
+  UnresolvedIssue,
+  SystemStats,
+  ExtractionResult,
+  ActionItemStatus,
+  User,
+  MeetingAnalytics,
+  MeetingQAResponse,
+  MeetingEvidenceResponse,
+  FilterOptions
+} from '../types';
 
 const TOKEN_KEY = 'meetflow_auth_token';
 
@@ -186,6 +199,77 @@ export class ApiService {
       method: 'POST',
       body: JSON.stringify({ transcript, title })
     });
+    return res.data;
+  }
+
+  static async transcribeAudio(params: {
+    audioData: string;
+    fileName: string;
+    mimeType?: string;
+    meetingTitle?: string;
+  }): Promise<{
+    transcript: string;
+    fileName: string;
+    durationSeconds?: number;
+    source: string;
+    confidence: number;
+  }> {
+    const res = await request<{
+      success: boolean;
+      data: {
+        transcript: string;
+        fileName: string;
+        durationSeconds?: number;
+        source: string;
+        confidence: number;
+      };
+    }>('/api/meetings/transcribe-audio', {
+      method: 'POST',
+      body: JSON.stringify(params)
+    });
+    return res.data;
+  }
+
+  static async getMeetingEvidence(meetingId: string): Promise<MeetingEvidenceResponse> {
+    const res = await request<{
+      success: boolean;
+      data: MeetingEvidenceResponse;
+    }>(`/api/meetings/${meetingId}/evidence`);
+    return res.data;
+  }
+
+  static async askMeetingQuestion(meetingId: string, question: string): Promise<MeetingQAResponse> {
+    const res = await request<{
+      success: boolean;
+      data: MeetingQAResponse;
+    }>(`/api/meetings/${meetingId}/ask`, {
+      method: 'POST',
+      body: JSON.stringify({ question })
+    });
+    return res.data;
+  }
+
+  static async getMeetingAnalytics(filters?: FilterOptions): Promise<MeetingAnalytics> {
+    const params = new URLSearchParams();
+    if (filters?.meetingId) params.append('meetingId', filters.meetingId);
+    if (filters?.owner) params.append('owner', filters.owner);
+    if (filters?.status && filters.status !== 'ALL') params.append('status', filters.status);
+    if (filters?.startDate) params.append('startDate', filters.startDate);
+    if (filters?.endDate) params.append('endDate', filters.endDate);
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await request<{
+      success: boolean;
+      data: MeetingAnalytics;
+    }>(`/api/meetings/analytics${qs}`);
+    return res.data;
+  }
+
+  static async getActionHistory(actionId: string): Promise<{ action: ActionItem; history: any[]; matches: any[] }> {
+    const res = await request<{
+      success: boolean;
+      data: { action: ActionItem; history: any[]; matches: any[] };
+    }>(`/api/actions/${actionId}/history`);
     return res.data;
   }
 

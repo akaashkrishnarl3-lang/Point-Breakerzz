@@ -1,11 +1,11 @@
 import React from 'react';
-import type { NavView } from './Sidebar';
+import type { NavView } from '../utils/router';
 import { PlusCircle, RotateCcw, AlertTriangle, LogOut, Sparkles } from 'lucide-react';
 import type { SystemStats, User } from '../types';
 
 interface HeaderProps {
   currentView: NavView;
-  onNavigate: (view: NavView) => void;
+  onNavigate: (viewOrPath: string) => void;
   onLoadDemo: () => void;
   stats: SystemStats;
   user?: User | null;
@@ -20,7 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   user,
   onLogout
 }) => {
-  const titles: Record<NavView, { title: string; subtitle: string }> = {
+  const titles: Record<string, { title: string; subtitle: string }> = {
     dashboard: {
       title: 'Accountability Dashboard',
       subtitle: 'Real-time overview of extracted commitments, cross-meeting status, and audit citations'
@@ -33,6 +33,18 @@ export const Header: React.FC<HeaderProps> = ({
       title: 'Meeting Evidence Inspector',
       subtitle: 'Verifiable audit trail linking decisions, tasks, and issues directly to transcript lines'
     },
+    evidence: {
+      title: 'Evidence Explorer & Citation Trace',
+      subtitle: 'Verifiable audit citations linking commitments and decisions directly to transcript lines'
+    },
+    'ask-meeting': {
+      title: 'Ask About This Meeting (Grounded AI Q&A)',
+      subtitle: 'Interactive transcript grounded Q&A with zero hallucination guarantee'
+    },
+    'audio-transcript': {
+      title: 'Audio Ingestion & Transcription',
+      subtitle: 'Upload audio recordings to generate grounded transcripts and extract commitments'
+    },
     tracker: {
       title: 'Accountability & Carry-Over Tracker',
       subtitle: 'Comprehensive matrix of tasks across all meetings with carry-over and completion history'
@@ -44,6 +56,10 @@ export const Header: React.FC<HeaderProps> = ({
     unresolved: {
       title: 'Unresolved Issues & Blockers',
       subtitle: 'Tracking persistent open questions and undecided topics across sprints'
+    },
+    analytics: {
+      title: 'Meeting Health & Accountability Analytics',
+      subtitle: 'Real-time database analytics, carry-over ratios, overdue trends, and dynamic filters'
     },
     'new-meeting': {
       title: 'Ingest New Meeting',
@@ -91,7 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {currentView !== 'new-meeting' && (
           <button
-            onClick={() => onNavigate('new-meeting')}
+            onClick={() => onNavigate('/meetings/new')}
             className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 shadow-md shadow-indigo-600/25"
           >
             <PlusCircle className="w-3.5 h-3.5" />
@@ -135,3 +151,5 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+
+export default Header;

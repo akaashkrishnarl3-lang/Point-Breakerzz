@@ -18,7 +18,10 @@ import {
   Search,
   Filter,
   ArrowRight,
-  Sparkles
+  Sparkles,
+  BarChart3,
+  Mic,
+  Quote
 } from 'lucide-react';
 import { NavView } from '../Sidebar';
 
@@ -27,7 +30,7 @@ interface DashboardViewProps {
   meetings: Meeting[];
   actions: ActionItem[];
   unresolved: UnresolvedIssue[];
-  onNavigate: (view: NavView) => void;
+  onNavigate: (viewOrPath: string) => void;
   onSelectMeeting: (meetingId: string) => void;
   onInspectItem: (item: ActionItem | UnresolvedIssue) => void;
   onLoadDemo?: () => void;
@@ -88,7 +91,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {/* Total Meetings */}
         <div 
-          onClick={() => onNavigate('meetings')}
+          onClick={() => onNavigate('/meetings')}
           className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-all hover:-translate-y-0.5 shadow-sm group"
         >
           <div className="flex items-center justify-between">
@@ -105,7 +108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Total Actions */}
         <div 
-          onClick={() => onNavigate('tracker')}
+          onClick={() => onNavigate('/accountability')}
           className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-all hover:-translate-y-0.5 shadow-sm group"
         >
           <div className="flex items-center justify-between">
@@ -120,9 +123,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Carried Over */}
         <div 
-          onClick={() => {
-            setStatusFilter('CARRIED_OVER');
-          }}
+          onClick={() => onNavigate('/accountability?status=CARRIED_OVER')}
           className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 cursor-pointer transition-all hover:-translate-y-0.5 shadow-sm group"
         >
           <div className="flex items-center justify-between">
@@ -137,9 +138,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Completed */}
         <div 
-          onClick={() => {
-            setStatusFilter('COMPLETED');
-          }}
+          onClick={() => onNavigate('/accountability?status=COMPLETED')}
           className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-all hover:-translate-y-0.5 shadow-sm group"
         >
           <div className="flex items-center justify-between">
@@ -154,9 +153,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Overdue */}
         <div 
-          onClick={() => {
-            setStatusFilter('OVERDUE');
-          }}
+          onClick={() => onNavigate('/accountability?status=OVERDUE')}
           className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-rose-500/50 cursor-pointer transition-all hover:-translate-y-0.5 shadow-sm group"
         >
           <div className="flex items-center justify-between">
@@ -171,7 +168,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Unresolved */}
         <div 
-          onClick={() => onNavigate('unresolved')}
+          onClick={() => onNavigate('/unresolved')}
           className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-amber-500/50 cursor-pointer transition-all hover:-translate-y-0.5 shadow-sm group"
         >
           <div className="flex items-center justify-between">
@@ -182,6 +179,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="text-2xl font-bold text-amber-300 mt-2">{stats.unresolvedIssues}</div>
           <div className="text-[11px] text-amber-200/80 mt-1">Decisions pending</div>
+        </div>
+      </div>
+
+      {/* Hackathon Features Quick Launch Strip */}
+      <div className="p-4 rounded-2xl bg-[#0F172A]/70 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            HTH-GA-03 Working Modules:
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => onNavigate('/audio-transcript')}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white transition-all flex items-center gap-1.5"
+          >
+            <Mic className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Module 1: Audio → Transcript</span>
+          </button>
+          <button
+            onClick={() => onNavigate('/accountability')}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-200 border border-slate-700 hover:border-slate-600 transition-all flex items-center gap-1.5"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400" />
+            <span>Module 2: Cross-Meeting Matrix</span>
+          </button>
+          <button
+            onClick={() => onNavigate('/analytics')}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white transition-all flex items-center gap-1.5"
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Module 3: Health Analytics</span>
+          </button>
+          <button
+            onClick={() => onNavigate('/evidence')}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600 hover:text-white transition-all flex items-center gap-1.5"
+          >
+            <Quote className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Module 4: Evidence Explorer</span>
+          </button>
+          <button
+            onClick={() => onNavigate('/ask-meeting')}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600 hover:text-white transition-all flex items-center gap-1.5"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span>Module 5: Grounded Q&A</span>
+          </button>
         </div>
       </div>
 
@@ -323,7 +367,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {filteredActions.length > 7 && (
               <div className="p-3 bg-slate-900/60 border-t border-slate-800 text-center">
                 <button
-                  onClick={() => onNavigate('tracker')}
+                  onClick={() => onNavigate('/accountability')}
                   className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors inline-flex items-center gap-1.5"
                 >
                   <span>View all {filteredActions.length} action items in Tracker</span>
@@ -344,7 +388,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span>Recent Meetings</span>
               </h3>
               <button
-                onClick={() => onNavigate('meetings')}
+                onClick={() => onNavigate('/meetings')}
                 className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
               >
                 View all
@@ -356,7 +400,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="p-6 text-center text-xs text-slate-400 rounded-xl bg-slate-800/20 border border-dashed border-slate-800 space-y-2">
                   <p>No meetings ingested yet.</p>
                   <button
-                    onClick={() => onNavigate('new-meeting')}
+                    onClick={() => onNavigate('/meetings/new')}
                     className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300"
                   >
                     <span>Ingest your first meeting</span>
@@ -398,7 +442,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span>Open Blockers & Issues</span>
               </h3>
               <button
-                onClick={() => onNavigate('unresolved')}
+                onClick={() => onNavigate('/unresolved')}
                 className="text-xs font-semibold text-amber-400 hover:text-amber-300 transition-colors"
               >
                 View all

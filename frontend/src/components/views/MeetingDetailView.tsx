@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Meeting, ActionItem, Decision, UnresolvedIssue } from '../../types';
+import { Meeting, ActionItem, Decision, UnresolvedIssue, MeetingQAResponse, EvidenceItem } from '../../types';
 import { StatusBadge } from '../StatusBadge';
+import { ApiService } from '../../services/api';
 import { 
   Calendar, 
   Users, 
@@ -13,9 +14,18 @@ import {
   Search,
   ExternalLink,
   ChevronRight,
+  ChevronLeft,
   ShieldCheck,
-  CheckCircle2
+  CheckCircle2,
+  MessageSquare,
+  Send,
+  Loader2,
+  Info,
+  CornerDownRight,
+  HelpCircle,
+  Hash
 } from 'lucide-react';
+import type { DetailTab } from '../../utils/router';
 
 interface MeetingDetailViewProps {
   meeting: Meeting;
@@ -23,6 +33,8 @@ interface MeetingDetailViewProps {
   decisions: Decision[];
   unresolved: UnresolvedIssue[];
   initialHighlight?: string;
+  initialTab?: DetailTab;
+  onTabChange?: (tab: DetailTab) => void;
   onBack: () => void;
   onInspectItem: (item: ActionItem | Decision | UnresolvedIssue) => void;
 }
@@ -33,60 +45,187 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
   decisions,
   unresolved,
   initialHighlight,
+  initialTab,
+  onTabChange,
   onBack,
   onInspectItem
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'actions' | 'decisions' | 'unresolved' | 'transcript'>('overview');
+  const [activeTab, setActiveTabState] = useState<DetailTab>(initialTab || 'overview');
   const [highlightedSentence, setHighlightedSentence] = useState<string | null>(initialHighlight || null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+
+  const setActiveTab = (tab: DetailTab) => {
+    setActiveTabState(tab);
+    onTabChange?.(tab);
+  };
+
+  useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTabState(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (initialHighlight !== undefined) {
+      setHighlightedSentence(initialHighlight || null);
+    }
+  }, [initialHighlight]);
+
+  // Evidence Explorer State
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+  const [selectedEvidenceIndex, setSelectedEvidenceIndex] = useState<number>(0);
+  const [loadingEvidence, setLoadingEvidence] = useState<boolean>(false);
+
+  // Ask About This Meeting (Q&A) State
+  const [qaMessages, setQaMessages] = useState<Array<{
+    sender: 'user' | 'ai';
+    text: string;
+    citations?: any[];
+    confidence?: number;
+    grounded?: boolean;
+    timestamp: string;
+  }>>([
+    {
+      sender: 'ai',
+      text: `Hello! I am your Grounded AI Meeting Assistant for "${meeting.title}". Ask me anything about this meeting's decisions, action items, owners, or open blockers. All answers are strictly grounded on the meeting transcript with zero hallucination.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+  ]);
+  const [qaInput, setQaInput] = useState<string>('');
+  const [isAsking, setIsAsking] = useState<boolean>(false);
+  const qaEndRef = useRef<HTMLDivElement>(null);
+
+  // Build unified evidence items
+  useEffect(() => {
+    const fetchEvidence = async () => {
+      setLoadingEvidence(true);
+      try {
+        const res = await ApiService.getMeetingEvidence(meeting.id);
+        if (res && res.items && res.items.length > 0) {
+          setEvidenceItems(res.items);
+        } else {
+          // Construct fallback from props
+          constructLocalEvidence();
+        }
+      } catch (err) {
+        constructLocalEvidence();
+      } finally {
+        setLoadingEvidence(false);
+      }
+    };
+
+    const constructLocalEvidence = () => {
+      const items: EvidenceItem[] = [
+        ...actions.map((a, idx) => ({
+          id: a.id,
+          category: 'ACTION_ITEM' as const,
+          title: a.task,
+          owner: a.owner || 'Not specified',
+          deadline: a.deadline || 'Not specified',
+          status: a.status,
+          confidence: a.confidence,
+          evidenceText: a.evidenceText,
+          sourceLine: a.sourceLine || (idx + 1),
+          isAmbiguous: a.isAmbiguous || a.owner === 'Not specified' || a.deadline === 'Not specified',
+          ambiguityReason: a.ambiguityReason
+        })),
+        ...decisions.map((d, idx) => ({
+          id: d.id,
+          category: 'DECISION' as const,
+          title: d.decision,
+          evidenceText: d.evidenceText,
+          sourceLine: d.sourceLine || (actions.length + idx + 1),
+          isAmbiguous: false
+        })),
+        ...unresolved.map((u, idx) => ({
+          id: u.id,
+          category: 'UNRESOLVED_ISSUE' as const,
+          title: u.issue,
+          status: u.status,
+          evidenceText: u.evidenceText,
+          sourceLine: u.sourceLine || (actions.length + decisions.length + idx + 1),
+          isAmbiguous: false
+        }))
+      ];
+      setEvidenceItems(items);
+    };
+
+    fetchEvidence();
+  }, [meeting.id, actions, decisions, unresolved]);
 
   useEffect(() => {
     if (initialHighlight) {
       setHighlightedSentence(initialHighlight);
-      setActiveTab('transcript');
+      setActiveTab('evidence');
     }
   }, [initialHighlight]);
 
+  useEffect(() => {
+    qaEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [qaMessages]);
+
   const handleHighlightInTranscript = (evidenceText: string) => {
     setHighlightedSentence(evidenceText);
-    setActiveTab('transcript');
-  };
-
-  // Helper to render transcript with highlighted evidence
-  const renderHighlightedTranscript = () => {
-    if (!highlightedSentence) {
-      return (
-        <div className="text-xs md:text-sm font-mono text-slate-300 leading-relaxed whitespace-pre-wrap">
-          {meeting.transcript}
-        </div>
-      );
+    const matchIndex = evidenceItems.findIndex(e => e.evidenceText.toLowerCase() === evidenceText.toLowerCase());
+    if (matchIndex !== -1) {
+      setSelectedEvidenceIndex(matchIndex);
     }
-
-    const cleanQuote = highlightedSentence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').trim();
-    const parts = meeting.transcript.split(new RegExp(`(${cleanQuote})`, 'gi'));
-
-    return (
-      <div className="text-xs md:text-sm font-mono text-slate-300 leading-relaxed whitespace-pre-wrap">
-        {parts.map((part, i) => {
-          if (part.toLowerCase() === highlightedSentence.toLowerCase()) {
-            return (
-              <mark
-                key={i}
-                className="evidence-highlight-active inline-block font-semibold px-1 rounded transition-all duration-300"
-              >
-                {part}
-              </mark>
-            );
-          }
-          return <span key={i}>{part}</span>;
-        })}
-      </div>
-    );
+    setActiveTab('evidence');
   };
+
+  const handleSelectEvidence = (index: number) => {
+    if (index >= 0 && index < evidenceItems.length) {
+      setSelectedEvidenceIndex(index);
+      setHighlightedSentence(evidenceItems[index].evidenceText);
+    }
+  };
+
+  const handleSendQuestion = async (queryText?: string) => {
+    const question = (queryText || qaInput).trim();
+    if (!question || isAsking) return;
+
+    const userMessage = {
+      sender: 'user' as const,
+      text: question,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setQaMessages(prev => [...prev, userMessage]);
+    setQaInput('');
+    setIsAsking(true);
+
+    try {
+      const response: MeetingQAResponse = await ApiService.askMeetingQuestion(meeting.id, question);
+      const aiMessage = {
+        sender: 'ai' as const,
+        text: response.answer,
+        citations: response.citations,
+        confidence: response.confidence,
+        grounded: response.grounded,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setQaMessages(prev => [...prev, aiMessage]);
+    } catch (err: any) {
+      setQaMessages(prev => [
+        ...prev,
+        {
+          sender: 'ai' as const,
+          text: "I couldn't find that information in this meeting transcript.",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  // Helper to split transcript into lines for line-by-line numbering
+  const transcriptLines = meeting.transcript.split(/\r?\n/);
+  const currentEvidence = evidenceItems[selectedEvidenceIndex];
 
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
-      {/* Back Button & Top Bar */}
+      {/* Top Bar with Back Button */}
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
@@ -99,7 +238,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Audited & Verifiable</span>
+            <span>Audited & Verifiable Lineage</span>
           </span>
         </div>
       </div>
@@ -124,14 +263,18 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                setActiveTab('transcript');
-                setHighlightedSentence(null);
-              }}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600/10 text-indigo-400 hover:bg-indigo-600/20 border border-indigo-500/30 transition-colors flex items-center gap-1.5"
+              onClick={() => setActiveTab('evidence')}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600/10 text-indigo-300 hover:bg-indigo-600/20 border border-indigo-500/30 transition-colors flex items-center gap-1.5"
             >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Full Transcript</span>
+              <Quote className="w-3.5 h-3.5" />
+              <span>Evidence Explorer</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('ask')}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-cyan-600/10 text-cyan-300 hover:bg-cyan-600/20 border border-cyan-500/30 transition-colors flex items-center gap-1.5"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Ask AI About Meeting</span>
             </button>
           </div>
         </div>
@@ -233,6 +376,31 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
           </span>
         </button>
         <button
+          onClick={() => setActiveTab('evidence')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'evidence'
+              ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-md'
+              : 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-600/10 border border-indigo-500/20'
+          }`}
+        >
+          <Quote className="w-3.5 h-3.5" />
+          <span>Module 4 • Evidence Explorer</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-indigo-900/60 text-[10px] font-bold">
+            {evidenceItems.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('ask')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'ask'
+              ? 'bg-cyan-600 text-white shadow-md'
+              : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-600/10 border border-cyan-500/20'
+          }`}
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          <span>Module 5 • Ask AI About Meeting</span>
+        </button>
+        <button
           onClick={() => setActiveTab('transcript')}
           className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
             activeTab === 'transcript'
@@ -241,15 +409,13 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
           }`}
         >
           <FileText className="w-3.5 h-3.5" />
-          <span>Full Transcript</span>
-          {highlightedSentence && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-          )}
+          <span>Transcript</span>
         </button>
       </div>
 
       {/* Tab Panels */}
-      {/* 1. OVERVIEW TAB */}
+
+      {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Action Items List */}
@@ -278,8 +444,8 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                     <StatusBadge status={act.status} size="sm" />
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Owner: <strong className="text-slate-200">{act.owner || 'Ambiguous (Unassigned)'}</strong></span>
-                    <span>Deadline: <strong className="text-slate-200">{act.deadline || 'None'}</strong></span>
+                    <span>Owner: <strong className="text-slate-200">{act.owner || 'Not specified'}</strong></span>
+                    <span>Deadline: <strong className="text-slate-200">{act.deadline || 'Not specified'}</strong></span>
                   </div>
                   <div className="pt-1 flex items-center justify-between border-t border-slate-700/40 text-[11px]">
                     <button
@@ -287,7 +453,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                       className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
                     >
                       <Quote className="w-3 h-3" />
-                      <span>Highlight transcript quote</span>
+                      <span>View in Evidence Explorer</span>
                     </button>
                     <button
                       onClick={() => onInspectItem(act)}
@@ -335,7 +501,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                           className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
                         >
                           <Quote className="w-3 h-3" />
-                          <span>View Quote</span>
+                          <span>View Evidence</span>
                         </button>
                         <button
                           onClick={() => onInspectItem(dec)}
@@ -376,13 +542,13 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                     >
                       <div className="font-semibold text-amber-200">{issue.issue}</div>
                       <div className="flex items-center justify-between text-[11px] text-amber-300/80 pt-1 border-t border-amber-500/10">
-                        <span>Owner: {issue.owner || 'Unassigned'}</span>
+                        <span>Status: {issue.status || 'UNRESOLVED'}</span>
                         <button
                           onClick={() => handleHighlightInTranscript(issue.evidenceText)}
                           className="text-amber-400 hover:text-amber-300 flex items-center gap-1"
                         >
                           <Quote className="w-3 h-3" />
-                          <span>View Quote</span>
+                          <span>View Evidence</span>
                         </button>
                       </div>
                     </div>
@@ -394,7 +560,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
         </div>
       )}
 
-      {/* 2. ACTION ITEMS TAB */}
+      {/* TAB 2: ACTION ITEMS TABLE */}
       {activeTab === 'actions' && (
         <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
@@ -424,10 +590,10 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                       )}
                     </td>
                     <td className="py-3 px-4 text-slate-300 whitespace-nowrap">
-                      {act.owner || <span className="text-amber-400 italic">null (Unassigned)</span>}
+                      {act.owner || <span className="text-amber-400 italic">Not specified</span>}
                     </td>
                     <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
-                      {act.deadline || <span className="italic">null (None)</span>}
+                      {act.deadline || <span className="italic">Not specified</span>}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
                       <StatusBadge status={act.status} size="sm" />
@@ -440,7 +606,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                         onClick={() => handleHighlightInTranscript(act.evidenceText)}
                         className="px-2.5 py-1 rounded bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/40 text-[11px] font-semibold"
                       >
-                        Highlight
+                        Evidence
                       </button>
                       <button
                         onClick={() => onInspectItem(act)}
@@ -457,7 +623,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
         </div>
       )}
 
-      {/* 3. DECISIONS TAB */}
+      {/* TAB 3: DECISIONS */}
       {activeTab === 'decisions' && (
         <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800 space-y-4">
           <h3 className="text-base font-bold text-white">Decisions Record</h3>
@@ -474,7 +640,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                     className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
                   >
                     <Quote className="w-3 h-3" />
-                    <span>View in Transcript</span>
+                    <span>View in Evidence Explorer</span>
                   </button>
                 </div>
                 <div className="text-xs text-slate-300 italic bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
@@ -486,7 +652,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
         </div>
       )}
 
-      {/* 4. UNRESOLVED ISSUES TAB */}
+      {/* TAB 4: UNRESOLVED ISSUES */}
       {activeTab === 'unresolved' && (
         <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800 space-y-4">
           <h3 className="text-base font-bold text-white">Unresolved Issues & Blockers</h3>
@@ -503,7 +669,7 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
                     className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1"
                   >
                     <Quote className="w-3 h-3" />
-                    <span>View in Transcript</span>
+                    <span>View in Evidence Explorer</span>
                   </button>
                 </div>
                 <div className="text-xs text-slate-300 italic bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
@@ -515,14 +681,342 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
         </div>
       )}
 
-      {/* 5. FULL TRANSCRIPT WITH HIGHLIGHTING TAB */}
+      {/* TAB 5: MODULE 4 — EVIDENCE EXPLORER */}
+      {activeTab === 'evidence' && (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="p-4 rounded-2xl bg-indigo-950/20 border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  Module 4
+                </span>
+                <h3 className="text-sm font-bold text-white">Evidence Explorer & Verbatim Line Trace</h3>
+              </div>
+              <p className="text-xs text-slate-400">
+                Trace any extracted decision, action item, owner, or deadline directly to its exact transcript line and quote. Zero hallucination guarantee.
+              </p>
+            </div>
+
+            {/* Stepper Navigation */}
+            <div className="flex items-center gap-2 self-start md:self-auto">
+              <button
+                onClick={() => handleSelectEvidence(selectedEvidenceIndex - 1)}
+                disabled={selectedEvidenceIndex === 0}
+                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Previous Evidence"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-xs font-mono text-indigo-300 px-2 font-bold">
+                {evidenceItems.length > 0 ? selectedEvidenceIndex + 1 : 0} of {evidenceItems.length}
+              </span>
+              <button
+                onClick={() => handleSelectEvidence(selectedEvidenceIndex + 1)}
+                disabled={selectedEvidenceIndex >= evidenceItems.length - 1}
+                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Next Evidence"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Split Pane: Left Evidence List & Selected Card, Right Transcript with Line Numbers */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Pane (5 Cols): Selected Evidence Detail & Selector */}
+            <div className="lg:col-span-5 space-y-4">
+              {/* Active Inspected Evidence Card */}
+              {currentEvidence && (
+                <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 to-[#121929] border-2 border-indigo-500/50 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
+                      currentEvidence.category === 'ACTION_ITEM'
+                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                        : currentEvidence.category === 'DECISION'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    }`}>
+                      {currentEvidence.category.replace('_', ' ')}
+                    </span>
+                    <span className="text-xs font-mono text-slate-400 flex items-center gap-1">
+                      <Hash className="w-3 h-3 text-indigo-400" />
+                      Line {currentEvidence.sourceLine}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-400 font-medium">Extracted Item:</div>
+                    <div className="text-sm font-bold text-white leading-snug">
+                      {currentEvidence.title}
+                    </div>
+                  </div>
+
+                  {currentEvidence.category === 'ACTION_ITEM' && (
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                      <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/50">
+                        <span className="text-[10px] text-slate-400 block font-semibold uppercase">Owner</span>
+                        <span className="font-bold text-slate-200">
+                          {currentEvidence.owner || 'Not specified'}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-800/60 border border-slate-700/50">
+                        <span className="text-[10px] text-slate-400 block font-semibold uppercase">Deadline</span>
+                        <span className="font-bold text-slate-200">
+                          {currentEvidence.deadline || 'Not specified'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Verbatim Source Evidence Callout */}
+                  <div className="p-3.5 rounded-xl bg-[#090D16] border border-amber-500/30 space-y-1">
+                    <div className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5 uppercase tracking-wider">
+                      <Quote className="w-3.5 h-3.5" />
+                      Source Evidence (Verbatim Transcript)
+                    </div>
+                    <p className="text-xs text-amber-100 font-mono italic leading-relaxed">
+                      "{currentEvidence.evidenceText}"
+                    </p>
+                  </div>
+
+                  {/* Ambiguity Flag if Applicable */}
+                  {currentEvidence.isAmbiguous && (
+                    <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 text-xs text-purple-300 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{currentEvidence.ambiguityReason || 'Ambiguous owner or deadline detected in source.'}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-800">
+                    <span>Meeting: <strong className="text-slate-200">{meeting.title}</strong></span>
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" />
+                      Verified
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Evidence Item Mini-Navigator List */}
+              <div className="p-4 rounded-2xl bg-slate-900/50 border border-slate-800 space-y-2 max-h-[350px] overflow-y-auto">
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  All Grounded Evidence ({evidenceItems.length})
+                </div>
+                {evidenceItems.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    onClick={() => handleSelectEvidence(idx)}
+                    className={`p-3 rounded-xl cursor-pointer text-xs transition-all space-y-1 ${
+                      selectedEvidenceIndex === idx
+                        ? 'bg-indigo-600/20 border border-indigo-500 text-white'
+                        : 'bg-slate-800/40 hover:bg-slate-800/80 border border-slate-700/40 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold truncate max-w-[200px]">{item.title}</span>
+                      <span className="text-[10px] font-mono text-indigo-400">Line {item.sourceLine}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 italic truncate">
+                      "{item.evidenceText}"
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Right Pane (7 Cols): Numbered Line Transcript Viewer with Highlighting */}
+            <div className="lg:col-span-7 p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-indigo-400" />
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    Transcript with Source Line Index
+                  </span>
+                </div>
+                {currentEvidence && (
+                  <span className="text-xs text-amber-300 font-mono font-semibold">
+                    Highlighting Line {currentEvidence.sourceLine}
+                  </span>
+                )}
+              </div>
+
+              {/* Numbered Transcript Viewer */}
+              <div 
+                ref={transcriptRef}
+                className="p-4 rounded-xl bg-[#090D16] border border-slate-800 max-h-[550px] overflow-y-auto font-mono text-xs text-slate-300 select-text space-y-1"
+              >
+                {transcriptLines.map((line, idx) => {
+                  const lineNum = idx + 1;
+                  const isCurrentTarget = currentEvidence && currentEvidence.sourceLine === lineNum;
+                  const containsEvidence = currentEvidence && line.toLowerCase().includes(currentEvidence.evidenceText.toLowerCase().trim());
+                  const isHighlighted = isCurrentTarget || containsEvidence;
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`flex items-start gap-3 py-1 px-2 rounded transition-colors ${
+                        isHighlighted
+                          ? 'bg-amber-500/20 border-l-4 border-amber-400 text-white font-semibold'
+                          : 'hover:bg-slate-800/30'
+                      }`}
+                    >
+                      <span className={`w-8 shrink-0 text-right select-none text-[11px] font-mono ${
+                        isHighlighted ? 'text-amber-400 font-bold' : 'text-slate-600'
+                      }`}>
+                        {lineNum}
+                      </span>
+                      <span className="flex-1 leading-relaxed whitespace-pre-wrap">
+                        {line}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: MODULE 5 — ASK ABOUT THIS MEETING (GROUNDED AI Q&A) */}
+      {activeTab === 'ask' && (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="p-4 rounded-2xl bg-cyan-950/20 border border-cyan-500/30 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  Module 5
+                </span>
+                <h3 className="text-sm font-bold text-white">Ask About This Meeting — Grounded AI Q&A</h3>
+              </div>
+              <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                RAG Grounded on Transcript
+              </span>
+            </div>
+            <p className="text-xs text-slate-400">
+              Ask questions about decisions, assigned tasks, deadlines, or unresolved issues. MeetFlow AI answers strictly using facts present in this transcript. If information is not in the transcript, it will never guess or fabricate.
+            </p>
+          </div>
+
+          {/* Quick Query Suggestion Chips */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-400 font-semibold flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-cyan-400" />
+              Suggested Questions:
+            </span>
+            {[
+              'What decisions were made in this meeting?',
+              'What tasks were assigned to Rahul?',
+              'What is still unresolved?',
+              'When is the database integration due?'
+            ].map((preset, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleSendQuestion(preset)}
+                className="px-3 py-1.5 rounded-xl text-xs bg-slate-900 hover:bg-cyan-950/40 border border-slate-800 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-300 transition-all flex items-center gap-1"
+              >
+                <span>{preset}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Chat Container */}
+          <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+            <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+              {qaMessages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
+                >
+                  <div className="flex items-center gap-2 mb-1 text-[10px] text-slate-400">
+                    <span className="font-semibold">{msg.sender === 'user' ? 'You' : 'MeetFlow Grounded AI'}</span>
+                    <span>•</span>
+                    <span>{msg.timestamp}</span>
+                  </div>
+
+                  <div
+                    className={`max-w-2xl p-4 rounded-2xl text-xs md:text-sm leading-relaxed ${
+                      msg.sender === 'user'
+                        ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded-tr-none'
+                        : 'bg-slate-800/80 border border-slate-700/60 text-slate-200 rounded-tl-none space-y-3'
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap">{msg.text}</div>
+
+                    {/* Citations if available */}
+                    {msg.citations && msg.citations.length > 0 && (
+                      <div className="pt-2 border-t border-slate-700/50 space-y-1.5">
+                        <div className="text-[11px] font-bold text-cyan-300 flex items-center gap-1 uppercase tracking-wider">
+                          <Quote className="w-3 h-3" />
+                          Supporting Citations from Transcript:
+                        </div>
+                        {msg.citations.map((c, cIdx) => (
+                          <div
+                            key={cIdx}
+                            className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] font-mono text-slate-300 space-y-1"
+                          >
+                            <div className="flex items-center justify-between text-slate-400 text-[10px]">
+                              <span>Line {c.sourceLine || 'In transcript'}</span>
+                              <span className="text-cyan-400">{c.relevance || 'Exact match'}</span>
+                            </div>
+                            <div className="italic text-cyan-100">"{c.text}"</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {isAsking && (
+                <div className="flex items-center gap-2 text-xs text-cyan-400 p-3 rounded-xl bg-cyan-950/20 border border-cyan-500/20 max-w-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Searching transcript facts & verifying zero hallucination...</span>
+                </div>
+              )}
+              <div ref={qaEndRef} />
+            </div>
+
+            {/* Input Bar */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendQuestion();
+              }}
+              className="flex items-center gap-2 pt-2 border-t border-slate-800"
+            >
+              <input
+                type="text"
+                placeholder="Ask anything about this meeting (e.g. 'What tasks were assigned to Rahul?')..."
+                value={qaInput}
+                onChange={(e) => setQaInput(e.target.value)}
+                disabled={isAsking}
+                className="flex-1 px-4 py-3 rounded-xl bg-slate-900 border border-slate-800 text-xs md:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
+              />
+              <button
+                type="submit"
+                disabled={!qaInput.trim() || isAsking}
+                className="px-5 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-40 flex items-center gap-2"
+              >
+                <span>Ask</span>
+                <Send className="w-3.5 h-3.5" />
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 7: FULL TRANSCRIPT */}
       {activeTab === 'transcript' && (
         <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <FileText className="w-4 h-4 text-indigo-400" />
-                <span>Source Transcript Audit Viewer</span>
+                <span>Full Source Transcript</span>
               </h3>
               <p className="text-xs text-slate-400">
                 Grounding contract: Every extracted accountability point corresponds directly to verbatim transcript lines.
@@ -545,9 +1039,16 @@ export const MeetingDetailView: React.FC<MeetingDetailViewProps> = ({
 
           <div
             ref={transcriptRef}
-            className="p-5 rounded-xl bg-[#090D16] border border-slate-800 max-h-[600px] overflow-y-auto space-y-2 select-text"
+            className="p-5 rounded-xl bg-[#090D16] border border-slate-800 max-h-[600px] overflow-y-auto space-y-1 font-mono text-xs md:text-sm text-slate-300 select-text"
           >
-            {renderHighlightedTranscript()}
+            {transcriptLines.map((line, idx) => (
+              <div key={idx} className="flex items-start gap-3 py-0.5">
+                <span className="w-8 shrink-0 text-right select-none text-[11px] font-mono text-slate-600">
+                  {idx + 1}
+                </span>
+                <span className="flex-1 whitespace-pre-wrap">{line}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

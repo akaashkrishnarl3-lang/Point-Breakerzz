@@ -1,6 +1,18 @@
-import { Meeting, ActionItem, Decision, UnresolvedIssue, SystemStats, ExtractionResult } from '../types/index.js';
+import {
+  Meeting,
+  ActionItem,
+  Decision,
+  UnresolvedIssue,
+  SystemStats,
+  ExtractionResult,
+  MeetingAnalytics,
+  FilterOptions,
+  MeetingQAResponse
+} from '../types/index.js';
 import { dataStore } from '../models/dataStore.js';
-import { reconcileCrossMeetingItems, reconcileUnresolvedIssues } from './crossMeetingTracker.js';
+import { reconcileCrossMeetingItems, reconcileUnresolvedIssues, findSourceLineNumber } from './crossMeetingTracker.js';
+import { askMeetingQuestion as askGroundedQA } from './meetingQAService.js';
+import { transcribeAudioFile as transcribeAudio, TranscribeAudioInput, TranscribeAudioResult } from './transcriptionService.js';
 
 export class StorageService {
   static getMeetings(userId: string): Meeting[] {
@@ -13,6 +25,14 @@ export class StorageService {
 
   static getActionItems(userId: string, filters?: { meetingId?: string; status?: string; owner?: string; search?: string }): ActionItem[] {
     return dataStore.getActions(userId, filters);
+  }
+
+  static getActionById(userId: string, id: string): ActionItem | undefined {
+    return dataStore.getActionById(userId, id);
+  }
+
+  static getActionHistory(userId: string, id: string) {
+    return dataStore.getActionHistory(userId, id);
   }
 
   static updateActionStatus(userId: string, id: string, status: ActionItem['status']): ActionItem | null {
@@ -29,6 +49,79 @@ export class StorageService {
 
   static getSystemStats(userId: string): SystemStats {
     return dataStore.getSystemStats(userId);
+  }
+
+  static getMeetingAnalytics(userId: string, filters?: FilterOptions): MeetingAnalytics {
+    return dataStore.getMeetingAnalytics(userId, filters);
+  }
+
+  static getMeetingEvidence(userId: string, meetingId: string) {
+    const meetingData = dataStore.getMeetingById(userId, meetingId);
+    if (!meetingData.meeting) return null;
+    const meeting = meetingData.meeting;
+    const actions = meetingData.actions;
+    const decisions = meetingData.decisions;
+    const unresolved = meetingData.unresolved;
+
+    const items = [
+      ...actions.map((a: ActionItem) => ({
+        id: a.id,
+        category: 'ACTION_ITEM' as const,
+        title: a.task,
+        owner: a.owner || 'Not specified',
+        deadline: a.deadline || 'Not specified',
+        status: a.status,
+        confidence: a.confidence,
+        evidenceText: a.evidenceText,
+        sourceLine: a.sourceLine || findSourceLineNumber(meeting.transcript, a.evidenceText),
+        isAmbiguous: a.isAmbiguous || a.owner === 'Not specified' || a.deadline === 'Not specified',
+        ambiguityReason: a.ambiguityReason
+      })),
+      ...decisions.map((d: Decision) => ({
+        id: d.id,
+        category: 'DECISION' as const,
+        title: d.decision,
+        evidenceText: d.evidenceText,
+        sourceLine: d.sourceLine || findSourceLineNumber(meeting.transcript, d.evidenceText),
+        isAmbiguous: false
+      })),
+      ...unresolved.map((u: UnresolvedIssue) => ({
+        id: u.id,
+        category: 'UNRESOLVED_ISSUE' as const,
+        title: u.issue,
+        status: u.status,
+        evidenceText: u.evidenceText,
+        sourceLine: u.sourceLine || findSourceLineNumber(meeting.transcript, u.evidenceText),
+        isAmbiguous: false
+      }))
+    ];
+
+    return {
+      meetingId: meeting.id,
+      meetingTitle: meeting.title,
+      meetingDate: meeting.date,
+      transcript: meeting.transcript,
+      totalEvidenceItems: items.length,
+      items
+    };
+  }
+
+  static async askMeetingQuestion(userId: string, meetingId: string, question: string): Promise<MeetingQAResponse | null> {
+    const meetingData = dataStore.getMeetingById(userId, meetingId);
+    if (!meetingData.meeting) return null;
+    return askGroundedQA(
+      {
+        meeting: meetingData.meeting,
+        actions: meetingData.actions,
+        decisions: meetingData.decisions,
+        unresolved: meetingData.unresolved
+      },
+      question
+    );
+  }
+
+  static async transcribeAudioFile(input: TranscribeAudioInput): Promise<TranscribeAudioResult> {
+    return transcribeAudio(input);
   }
 
   static loadDemoData(userId: string) {

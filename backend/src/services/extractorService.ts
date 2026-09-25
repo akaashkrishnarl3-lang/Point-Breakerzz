@@ -1,6 +1,7 @@
 import { ExtractionResult } from '../types/index.js';
 import { config } from '../utils/env.js';
 import { logger } from '../utils/logger.js';
+import { findSourceLineNumber } from './crossMeetingTracker.js';
 
 export interface ExtractionOptions {
   apiKey?: string;
@@ -21,6 +22,18 @@ export async function extractMeetingData(
       const result = await callGeminiApi(transcript, meetingTitle, apiKey.trim());
       if (isValidExtractionResult(result)) {
         logger.info('Gemini API extraction successful.');
+        // Ensure source lines are attached
+        for (const d of result.decisions) {
+          if (!d.source_line) d.source_line = findSourceLineNumber(transcript, d.evidence_text);
+        }
+        for (const a of result.action_items) {
+          if (!a.source_line) a.source_line = findSourceLineNumber(transcript, a.evidence_text);
+          if (!a.owner) a.owner = null;
+          if (!a.deadline) a.deadline = null;
+        }
+        for (const u of result.unresolved_issues) {
+          if (!u.source_line) u.source_line = findSourceLineNumber(transcript, u.evidence_text);
+        }
         return result;
       }
     } catch (err) {
@@ -50,16 +63,9 @@ Return valid JSON matching the required schema.
 Extract only facts supported by the transcript.
 Do not infer commitments from casual suggestions.
 Do not invent owners, dates, deadlines or decisions.
-If an owner is unclear, set owner to null and explain ambiguity in the evidence/notes.
-If a deadline is absent, set deadline to null.
+If an owner is unclear or not specified, set owner to null and explain ambiguity in the evidence/notes.
+If a deadline is absent or not specified, set deadline to null.
 Every decision/action/unresolved issue must include evidence_text copied verbatim from the transcript.
-
-Distinguish:
-- suggestion vs commitment
-- discussion vs decision
-- possible task vs assigned task
-- unresolved question vs resolved decision
-- completion statement vs future commitment
 
 SCHEMA:
 {
@@ -75,7 +81,7 @@ SCHEMA:
       "task": "Specific task description",
       "owner": "Person name or null",
       "deadline": "Deadline text or null",
-      "status": "NEW" | "CARRIED_OVER" | "COMPLETED" | "AMBIGUOUS",
+      "status": "NEW" | "IN_PROGRESS" | "CARRIED_OVER" | "COMPLETED" | "AMBIGUOUS",
       "confidence": 0.95,
       "evidence_text": "Exact sentence from transcript",
       "is_ambiguous": false,
@@ -140,9 +146,9 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
     .map(l => l.trim())
     .filter(l => l.length > 0);
 
-  const decisions: { decision: string; evidence_text: string }[] = [];
+  const decisions: ExtractionResult['decisions'] = [];
   const actionItems: ExtractionResult['action_items'] = [];
-  const unresolvedIssues: { issue: string; owner: string | null; evidence_text: string }[] = [];
+  const unresolvedIssues: ExtractionResult['unresolved_issues'] = [];
 
   // Sentence split for evidence tracking
   const rawSentences = transcript
@@ -158,7 +164,7 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
     const speakerMatch = line.match(/^([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)(?:\s*\([^)]*\))?(?:\s*\[[^\]]+\])?\s*:/);
     if (speakerMatch && speakerMatch[1]) {
       const name = speakerMatch[1].replace(/\s*\([^)]*\)/, '').trim();
-      if (!['Welcome', 'Agreed', 'Thanks', 'Sprint'].includes(name)) {
+      if (!['Welcome', 'Agreed', 'Thanks', 'Sprint', 'Good', 'Yes', 'Also'].includes(name)) {
         participantNames.add(name);
       }
     }
@@ -166,6 +172,7 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
 
   for (const sentence of rawSentences) {
     const lower = sentence.toLowerCase();
+    const sourceLine = findSourceLineNumber(transcript, sentence);
 
     // 1. DECISIONS DETECTION
     if (
@@ -189,7 +196,8 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
 
       decisions.push({
         decision: cleanDecision,
-        evidence_text: sentence
+        evidence_text: sentence,
+        source_line: sourceLine
       });
       continue;
     }
@@ -220,17 +228,19 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
       unresolvedIssues.push({
         issue: issueText,
         owner: issueOwner,
-        evidence_text: sentence
+        evidence_text: sentence,
+        source_line: sourceLine
       });
       continue;
     }
 
-    // 3. ACTION ITEMS & COMPLETIONS
+    // 3. ACTION ITEMS & COMPLETIONS (Speaker or passive completion)
+    // A. Explicit Speaker Completion: "Rahul completed the database integration"
     const completedMatch = sentence.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(completed|finished|shipped|merged)\s+(?:the\s+)?([^.,]+)/i);
     if (completedMatch && !lower.includes('haven\'t') && !lower.includes('couldn\'t')) {
       const ownerCandidate = completedMatch[1].trim();
       const taskDesc = completedMatch[3].trim();
-      
+
       actionItems.push({
         task: `Completed: ${taskDesc}`,
         owner: ownerCandidate,
@@ -238,31 +248,76 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
         status: 'COMPLETED',
         confidence: 0.98,
         evidence_text: sentence,
+        source_line: sourceLine,
         is_ambiguous: false
       });
       continue;
     }
 
-    // Check for Carried Over / Delays
-    const carryOverMatch = sentence.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:needs\s+two\s+more\s+days|carrying\s+this\s+over|couldn't\s+complete|could\s+not\s+finish|delayed)/i);
-    if (carryOverMatch) {
-      const ownerCandidate = carryOverMatch[1].trim();
+    // B. Passive Completion: "The database integration has been completed"
+    if (
+      (lower.includes('has been completed') || lower.includes('is completed') || lower.includes('have been completed')) &&
+      !lower.includes('not completed') &&
+      !lower.includes('incomplete')
+    ) {
+      let taskDesc = sentence;
+      if (sentence.includes(':')) {
+        taskDesc = sentence.split(':').slice(1).join(':').trim();
+      }
+      actionItems.push({
+        task: taskDesc,
+        owner: null,
+        deadline: null,
+        status: 'COMPLETED',
+        confidence: 0.96,
+        evidence_text: sentence,
+        source_line: sourceLine,
+        is_ambiguous: false
+      });
+      continue;
+    }
+
+    // C. Carried Over / Incomplete: "The database integration is still incomplete" or "Rahul needs more time"
+    if (
+      lower.includes('still incomplete') ||
+      lower.includes('is incomplete') ||
+      lower.includes('needs more time') ||
+      lower.includes('need more time') ||
+      lower.includes('carrying this over') ||
+      lower.includes('couldn\'t complete') ||
+      lower.includes('could not complete') ||
+      lower.includes('delayed')
+    ) {
+      let ownerCandidate: string | null = null;
+      for (const name of participantNames) {
+        if (sentence.includes(name)) {
+          ownerCandidate = name;
+          break;
+        }
+      }
+
       const deadlineMatch = sentence.match(/\bby\s+([A-Z][a-z]+(?:\s+(?:morning|afternoon|evening|next\s+week))?|\d{4}-\d{2}-\d{2})/i);
       const deadline = deadlineMatch ? deadlineMatch[1] : null;
 
+      let cleanTask = sentence;
+      if (sentence.includes(':')) {
+        cleanTask = sentence.split(':').slice(1).join(':').trim();
+      }
+
       actionItems.push({
-        task: `Carried Over: Progress on assigned task (${ownerCandidate})`,
+        task: cleanTask,
         owner: ownerCandidate,
         deadline: deadline,
         status: 'CARRIED_OVER',
         confidence: 0.94,
         evidence_text: sentence,
+        source_line: sourceLine,
         is_ambiguous: false
       });
       continue;
     }
 
-    // Check for Future Commitments
+    // D. Future Commitments: "Rahul will complete the database integration by Friday"
     const commitmentMatch = sentence.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+will\s+([a-zA-Z0-9_\-\s]{6,80}?)(?:\s+by\s+([A-Z][a-z]+(?:\s+(?:afternoon|morning|evening|next\s+week))?|\d{4}-\d{2}-\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+))?([.,]|$)/i);
     if (commitmentMatch) {
       const ownerCandidate = commitmentMatch[1].trim();
@@ -277,6 +332,27 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
           status: 'NEW',
           confidence: 0.95,
           evidence_text: sentence,
+          source_line: sourceLine,
+          is_ambiguous: false
+        });
+        continue;
+      }
+    }
+
+    // E. In-Progress items: "Priya is working on the dashboard UI"
+    const inProgressMatch = sentence.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+is\s+(?:currently\s+)?(working on|building|implementing)\s+([^.,]+)/i);
+    if (inProgressMatch) {
+      const ownerCandidate = inProgressMatch[1].trim();
+      const taskDesc = inProgressMatch[3].trim();
+      if (!['Agreed', 'Thanks'].includes(ownerCandidate)) {
+        actionItems.push({
+          task: `In Progress: ${taskDesc}`,
+          owner: ownerCandidate,
+          deadline: null,
+          status: 'IN_PROGRESS',
+          confidence: 0.92,
+          evidence_text: sentence,
+          source_line: sourceLine,
           is_ambiguous: false
         });
         continue;
@@ -305,6 +381,7 @@ export function runGroundedLocalExtractor(transcript: string, title: string): Ex
         status: 'AMBIGUOUS',
         confidence: 0.70,
         evidence_text: sentence,
+        source_line: sourceLine,
         is_ambiguous: true,
         ambiguity_reason: 'Unassigned suggestion. No individual owner or specific calendar deadline committed.'
       });

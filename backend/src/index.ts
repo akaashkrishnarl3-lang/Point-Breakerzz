@@ -9,8 +9,8 @@ const app = express();
 
 // Middlewares
 app.use(createCorsMiddleware());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Request logging in dev
 if (!config.isProduction) {

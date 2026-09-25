@@ -20,8 +20,26 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       icon: Sparkles,
       dot: 'bg-emerald-400'
     },
+    IN_PROGRESS: {
+      label: 'IN PROGRESS',
+      bg: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+      icon: Clock,
+      dot: 'bg-cyan-400'
+    },
+    'IN PROGRESS': {
+      label: 'IN PROGRESS',
+      bg: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+      icon: Clock,
+      dot: 'bg-cyan-400'
+    },
     CARRIED_OVER: {
-      label: 'CARRIED OVER',
+      label: 'CARRIED-OVER',
+      bg: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+      icon: ArrowRightLeft,
+      dot: 'bg-amber-400'
+    },
+    'CARRIED-OVER': {
+      label: 'CARRIED-OVER',
       bg: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
       icon: ArrowRightLeft,
       dot: 'bg-amber-400'

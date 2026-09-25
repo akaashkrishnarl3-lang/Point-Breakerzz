@@ -16,7 +16,7 @@ import { NavView } from '../Sidebar';
 interface MeetingsViewProps {
   meetings: Meeting[];
   onSelectMeeting: (meetingId: string) => void;
-  onNavigate: (view: NavView) => void;
+  onNavigate: (viewOrPath: string) => void;
 }
 
 export const MeetingsView: React.FC<MeetingsViewProps> = ({
@@ -44,7 +44,7 @@ export const MeetingsView: React.FC<MeetingsViewProps> = ({
         </div>
 
         <button
-          onClick={() => onNavigate('new-meeting')}
+          onClick={() => onNavigate('/meetings/new')}
           className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors flex items-center gap-2 self-start sm:self-auto shadow-md shadow-indigo-600/25"
         >
           <PlusCircle className="w-4 h-4" />

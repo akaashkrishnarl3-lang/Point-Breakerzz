@@ -12,7 +12,19 @@ export interface User {
   last_login_at: string;
 }
 
-export type ActionItemStatus = 'NEW' | 'CARRIED_OVER' | 'COMPLETED' | 'OVERDUE' | 'AMBIGUOUS';
+export type ActionItemStatus = 'NEW' | 'IN_PROGRESS' | 'CARRIED_OVER' | 'COMPLETED' | 'OVERDUE' | 'AMBIGUOUS';
+
+export interface ActionItemMatch {
+  id: string;
+  actionItemId: string;
+  previousActionItemId: string;
+  meetingId: string;
+  matchType: 'CARRIED_OVER' | 'COMPLETED' | 'IN_PROGRESS' | 'RECONCILED';
+  matchReason: string;
+  confidence: number;
+  evidence: string;
+  createdAt: string;
+}
 
 export interface ActionItemHistoryPoint {
   meetingId: string;
@@ -20,7 +32,10 @@ export interface ActionItemHistoryPoint {
   date: string;
   status: ActionItemStatus;
   evidenceText: string;
+  sourceLine?: number;
   note?: string;
+  matchReason?: string;
+  confidence?: number;
 }
 
 export interface ActionItem {
@@ -38,7 +53,10 @@ export interface ActionItem {
   evidenceText: string;
   evidenceStart?: number;
   evidenceEnd?: number;
+  sourceLine?: number;
   linkedItemId?: string | null;
+  match?: ActionItemMatch | null;
+  matches?: ActionItemMatch[];
   isAmbiguous: boolean;
   ambiguityReason?: string;
   history: ActionItemHistoryPoint[];
@@ -55,6 +73,7 @@ export interface Decision {
   meetingDate?: string;
   decision: string;
   evidenceText: string;
+  sourceLine?: number;
   createdAt: string;
 }
 
@@ -69,6 +88,7 @@ export interface UnresolvedIssue {
   owner: string | null;
   status: 'UNRESOLVED' | 'RESOLVED';
   evidenceText: string;
+  sourceLine?: number;
   linkedIssueId?: string | null;
   resolvedByDecisionId?: string;
   appearances?: {
@@ -76,6 +96,7 @@ export interface UnresolvedIssue {
     meetingTitle: string;
     date: string;
     evidenceText: string;
+    sourceLine?: number;
   }[];
   createdAt: string;
 }
@@ -88,6 +109,8 @@ export interface Meeting {
   date: string;
   participants: string[];
   transcript: string;
+  audioFileName?: string;
+  audioDuration?: number;
   summary: string;
   actionItemsCount?: number;
   decisionsCount?: number;
@@ -100,6 +123,7 @@ export interface ExtractionResult {
   decisions: {
     decision: string;
     evidence_text: string;
+    source_line?: number;
   }[];
   action_items: {
     task: string;
@@ -108,6 +132,7 @@ export interface ExtractionResult {
     status: ActionItemStatus;
     confidence: number;
     evidence_text: string;
+    source_line?: number;
     is_ambiguous?: boolean;
     ambiguity_reason?: string;
   }[];
@@ -115,6 +140,7 @@ export interface ExtractionResult {
     issue: string;
     owner: string | null;
     evidence_text: string;
+    source_line?: number;
   }[];
 }
 
@@ -123,15 +149,115 @@ export interface FilterOptions {
   status?: ActionItemStatus | 'ALL';
   owner?: string;
   meetingId?: string;
+  dateRange?: 'all' | '7d' | '30d' | 'custom';
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface SystemStats {
   totalMeetings: number;
   totalActionItems: number;
   openItems: number;
+  inProgressItems?: number;
   carriedOverItems: number;
   completedItems: number;
   overdueItems: number;
   unresolvedIssues: number;
   ambiguousItems: number;
 }
+
+export interface MeetingAnalytics {
+  totalMeetings: number;
+  totalActionItems: number;
+  completedItems: number;
+  inProgressItems: number;
+  carriedOverItems: number;
+  overdueItems: number;
+  unresolvedIssues: number;
+  openItems: number;
+  ambiguousItems: number;
+  completionRate: number;
+  averageActionItemsPerMeeting: number;
+  meetingsWithUnresolvedCommitments: {
+    meetingId: string;
+    title: string;
+    date: string;
+    unresolvedCount: number;
+    overdueCount: number;
+  }[];
+  statusDistribution: {
+    status: ActionItemStatus;
+    label: string;
+    count: number;
+    percentage: number;
+    color: string;
+  }[];
+  completedVsPending: {
+    completed: number;
+    pending: number;
+    overdue: number;
+  };
+  actionItemsByMeeting: {
+    meetingId: string;
+    title: string;
+    date: string;
+    total: number;
+    completed: number;
+    carriedOver: number;
+    overdue: number;
+  }[];
+  timeline: {
+    date: string;
+    meetingTitle: string;
+    totalActions: number;
+    completed: number;
+    overdue: number;
+    carriedOver: number;
+  }[];
+  ownersBreakdown: {
+    owner: string;
+    total: number;
+    completed: number;
+    overdue: number;
+    inProgress: number;
+  }[];
+}
+
+export interface MeetingCitation {
+  text: string;
+  sourceLine?: number;
+  speaker?: string;
+  relevance: string;
+}
+
+export interface MeetingQAResponse {
+  question: string;
+  answer: string;
+  citations: MeetingCitation[];
+  confidence: number;
+  grounded: boolean;
+}
+
+export interface EvidenceItem {
+  id: string;
+  category: 'ACTION_ITEM' | 'DECISION' | 'UNRESOLVED_ISSUE';
+  title: string;
+  owner?: string;
+  deadline?: string;
+  status?: string;
+  confidence?: number;
+  evidenceText: string;
+  sourceLine: number;
+  isAmbiguous?: boolean;
+  ambiguityReason?: string;
+}
+
+export interface MeetingEvidenceResponse {
+  meetingId: string;
+  meetingTitle: string;
+  meetingDate: string;
+  transcript: string;
+  totalEvidenceItems: number;
+  items: EvidenceItem[];
+}
+
